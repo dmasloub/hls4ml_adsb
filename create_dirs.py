@@ -1,4 +1,4 @@
-from constants import *
+from utils.constants import *
 import os
 
 if not os.path.exists(MODEL_STANDARD_DIR):
