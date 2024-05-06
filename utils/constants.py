@@ -4,7 +4,7 @@ FEATURES = ["altitude", "groundspeed", "vertical_rate", "x", "y"]
 DIFF_FEATURES = ["altitude", "groundspeed", "x", "y"]
 STATE_VECTOR_FEATURES = ["groundspeed", "vertical_rate", "longitude", "latitude", "altitude", "heading_unwrapped"]
 
-MODEL_DIR = "models"
+MODEL_DIR = "trained_models"
 MODEL_STANDARD_DIR = os.path.join(MODEL_DIR, "standard")
 MODEL_LSTM_DIR = os.path.join(MODEL_DIR, "lstm")
 
