@@ -10,9 +10,9 @@ print("Configuration")
 print_dict(config)
 print("-----------------------------------")
 hls_model = hls4ml.converters.convert_from_keras_model(
-    model, hls_config=config, output_dir='hls_model/hls4ml_prj', part='xc7z020clg400-1'
+    model, hls_config=config, output_dir='../hls_model/hls4ml_prj', part='xc7z020clg400-1'
 )
 hls4ml.utils.plot_model(hls_model,to_file=MODEL_STANDARD_DIR+'/model_plot.png', show_shapes=True, show_precision=True)
 hls_model.compile()
 hls_model.build(csim=False)
-hls4ml.report.read_vivado_report('hls_model/hls4ml_prj')
+hls4ml.report.read_vivado_report('../hls_model/hls4ml_prj')
