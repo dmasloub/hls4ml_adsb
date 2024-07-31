@@ -1,50 +1,66 @@
 import os
-import pandas as pd
-from tqdm import tqdm
-from src.utils.preprocessing import filter_outliers, diff_data
-from src.config import (
-    DATA_TRAIN_DIR, DATA_VALIDATION_DIR, DATA_TEST_NOISE_DIR, DATA_TEST_LANDING_DIR,
-    DATA_TEST_DEPARTING_DIR, DATA_TEST_MANOEUVER_DIR, DIFF_DATA, DIFF_FEATURES, K_LAG, K_ORDER, STATE_VECTOR_FEATURES
-)
+import pickle
+import hls4ml
+import yaml
+from tensorflow.keras.models import load_model
+from qkeras import QDense, quantized_bits  # Import required components from QKeras
+from keras.utils import custom_object_scope
+from src.utils.visualization import print_dict
 
-class DataLoader:
-    def __init__(self, paths=None):
-        if paths is None:
-            paths = {
-                "train": DATA_TRAIN_DIR,
-                "validation": DATA_VALIDATION_DIR,
-                "test_noise": DATA_TEST_NOISE_DIR,
-                "test_landing": DATA_TEST_LANDING_DIR,
-                "test_departing": DATA_TEST_DEPARTING_DIR,
-                "test_manoeuver": DATA_TEST_MANOEUVER_DIR
-            }
-        self.data_dict = {key: [] for key in paths}
-        self.paths = paths
+class QKerasToHLSConverter:
+    def __init__(self, model_path, output_dir, build_model=False, custom_objects=None):
+        self.model_path = model_path
+        self.output_dir = output_dir
+        self.build_model = build_model
+        self.custom_objects = custom_objects if custom_objects else {'QDense': QDense, 'quantized_bits': quantized_bits}
+        os.environ['LD_PRELOAD'] = '/lib/x86_64-linux-gnu/libudev.so.1'
 
-    def load_data(self):
-        for key, path in self.paths.items():
-            files = os.listdir(path)
-            
-            for file in tqdm(files, desc=f"Loading {key} data"):
-                file_path = os.path.join(path, file)
-                
-                # Check if the path is a file
-                if os.path.isfile(file_path):
-                    df = pd.read_csv(file_path)
-                    
-                    if key == "train":
-                        df = filter_outliers(df, cols=["longitude", "latitude", "altitude", "groundspeed", "x", "y"], std=5)
-                    elif key == "validation":
-                        df = filter_outliers(df, cols=["longitude", "latitude", "altitude", "groundspeed", "x", "y"], std=8)
+    def load_model(self):
+        with custom_object_scope(self.custom_objects):
+            self.model = load_model(self.model_path)
 
-                    if DIFF_DATA:
-                        df = diff_data(df, cols=DIFF_FEATURES, lag=K_LAG, order=K_ORDER)
-                    
-                    self.data_dict[key].append(df)
+    def load_pipeline(self):
+        with open(self.model_path + '/pipeline.pkl', 'rb') as f:
+            self.pipeline = pickle.load(f)
 
-        return self.data_dict
+    def create_hls_config(self):
+        with open(self.model_path + '/hls4ml_config.yml', 'r') as file:
+            self.hls_config = yaml.safe_load(file)
 
+    def convert_to_hls(self):
+        self.hls_model = hls4ml.converters.convert_from_keras_model(
+            self.model,
+            hls_config=self.hls_config,
+            output_dir=self.output_dir,
+            backend='VivadoAccelerator',
+            board='pynq-z2'
+        )
+
+    def compile_hls_model(self):
+        self.hls_model.compile()
+        if self.build_model:
+            self.hls_model.build(csim=False, export=True, bitfile=True)
+
+    def plot_model(self):
+        hls4ml.utils.plot_model(self.hls_model, show_shapes=True, show_precision=True, to_file=None)
+
+    def convert(self):
+        self.load_model()
+        self.load_pipeline()
+        self.create_hls_config()
+        self.convert_to_hls()
+        self.plot_model()
+        self.compile_hls_model()
+        print("HLS model has been successfully created and compiled.")
+        print_dict(self.hls_config)
+
+# Example usage
 if __name__ == "__main__":
-    data_loader = DataLoader()
-    data_dict = data_loader.load_data()
-    print("Data loaded successfully.")
+    from src.config import MODEL_STANDARD_DIR  # Ensure this import is correct
+
+    converter = QKerasToHLSConverter(
+        model_path=MODEL_STANDARD_DIR,
+        output_dir='hls_model/hls4ml_prj',
+        build_model=True  # Set to False if you do not want to build the model
+    )
+    converter.convert()
