@@ -115,7 +115,7 @@ This script will:
 To test the model with an already converted HLS model, run:
 
 ```bash
-python test.py --use_hls --hls_model_dir='hls_model/hls4ml_prj'
+python test.py
 ```
 
 This script will:
