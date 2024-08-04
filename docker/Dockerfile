@@ -50,14 +50,14 @@ RUN mamba clean --all -f -y && \
     fix-permissions "/home/${NB_USER}"
 
 # Copy your project files into the container
-COPY . /home/${NB_USER}/adsb_pynqz2
+COPY . /home/${NB_USER}/hls4ml_adsb
 
 # Set working directory
-WORKDIR /home/${NB_USER}/adsb_pynqz2
+WORKDIR /home/${NB_USER}/hls4ml_adsb
 
 # Fix permissions for the working directory
 USER root
-RUN chown -R 1000:100 /home/${NB_USER}/adsb_pynqz2
+RUN chown -R 1000:100 /home/${NB_USER}/hls4ml_adsb
 
 USER ${NB_USER}
 
