@@ -41,6 +41,14 @@ def test_autoencoder(custom_paths=None, build_hls_model=False):
     actual_labels = {}
     predicted_labels_keras = {}
     predicted_labels_hls = {}
+    
+    # Convert HLS model
+    converter = QKerasToHLSConverter(
+        model_path=MODEL_STANDARD_DIR,
+        output_dir='hls_model/hls4ml_prj',
+        build_model=build_hls_model
+    )
+    converter.convert()
 
     # Process each test dataset
     for dataset in test_datasets:
@@ -83,16 +91,10 @@ def test_autoencoder(custom_paths=None, build_hls_model=False):
         all_reconstruction_errors_keras.append(reconstruction_errors_keras)
         predicted_labels_keras[dataset] = q_verdict(reconstruction_errors_keras, mu, std, STANDARD_Q_THRESHOLD)
 
-        # Convert and test HLS model
-        converter = QKerasToHLSConverter(
-            model_path=MODEL_STANDARD_DIR,
-            output_dir='hls_model/hls4ml_prj',
-            build_model=build_hls_model
-        )
-        converter.convert()
-
-        hls_model = hls4ml.model.hls_model.HLSModel(converter.hls_model.config)
-        preds_test_hls = hls_model.predict(X_test_n)
+        
+        # Load and test HLS model
+        hls_model = converter.hls_model
+        preds_test_hls = hls_model.predict(np.ascontiguousarray(X_test_n))
         reconstruction_errors_hls = np.linalg.norm(X_test_n - preds_test_hls, axis=1) ** 2
         all_reconstruction_errors_hls.append(reconstruction_errors_hls)
         predicted_labels_hls[dataset] = q_verdict(reconstruction_errors_hls, mu, std, STANDARD_Q_THRESHOLD)
@@ -123,7 +125,7 @@ def test_autoencoder(custom_paths=None, build_hls_model=False):
 
 if __name__ == "__main__":
     # Example usage with default paths and building HLS model
-    test_autoencoder(build_hls_model=True)
+    test_autoencoder(build_hls_model=False)
 
     # Example usage with custom paths and not building HLS model
     # custom_paths = {
