@@ -24,8 +24,7 @@ class QKerasToHLSConverter:
             self.pipeline = pickle.load(f)
 
     def create_hls_config(self):
-        with open(self.model_path + '/hls4ml_config.yml', 'r') as file:
-            self.hls_config = yaml.safe_load(file)
+        self.hls_config = hls4ml.utils.config_from_keras_model(self.model, granularity='model')
 
     def convert_to_hls(self):
         self.hls_model = hls4ml.converters.convert_from_keras_model(
