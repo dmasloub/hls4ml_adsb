@@ -22,50 +22,10 @@ from src.model.autoencoder import QuantizedAutoencoder
 from src.utils.utils import get_windows_data
 from src.utils.visualization import plot_training_history
 
-def train_autoencoder(custom_paths=None, bits=6, integer=0, alpha=1, pruning_percent=0.75, begin_step=2000, frequency=100):
-    # Load data
-    data_loader = DataLoader(paths=custom_paths)
-    data_dict = data_loader.load_data()
-
-    # Process training data
-    X_windows_list = []
-    y_windows_list = []
-
-    for df in tqdm(data_dict["train"], desc="Processing training data"):
-        if df.empty:
-            continue  # Skip empty DataFrames
-
-        windowed_data, windowed_labels = get_windows_data(
-            df[FEATURES],
-            [0] * df.shape[0],
-            window_size=WINDOW_SIZE_STANDARD_AUTOENCODER,
-            tsfresh=True
-        )
-
-        X_windows_list.append(windowed_data)
-        y_windows_list.append(windowed_labels)
-
-    # Extract features and labels
-    extracted_features_list = []
-    concatenated_labels = []
-
-    for X_window, y_window in tqdm(zip(X_windows_list, y_windows_list), desc="Extacting features"):
-        features = extract_features(
-            X_window,
-            column_id="id",
-            column_sort="time",
-            default_fc_parameters=MinimalFCParameters()
-        )
-        imputed_features = impute(features)
-        extracted_features_list.append(imputed_features)
-        concatenated_labels.extend(y_window)
-
-    X_train = pd.concat(extracted_features_list, ignore_index=True)
-    y_train = np.array(concatenated_labels)
-
-    # Preprocess data
-    pipeline = Pipeline([('normalize', StandardScaler())])
-    X_train_n = pipeline.fit_transform(X_train)
+def train_autoencoder(preprocessed_data, bits=4, integer=0, alpha=1, pruning_percent=0.75, begin_step=2000, frequency=100):
+    # Get preprocessed training data
+    X_train_n = preprocessed_data['train']['X_n']
+    y_train = preprocessed_data['train']['y']
 
     # Define model
     autoencoder = QuantizedAutoencoder(
@@ -86,13 +46,8 @@ def train_autoencoder(custom_paths=None, bits=6, integer=0, alpha=1, pruning_per
     pruned_model.compile(loss='mean_squared_error', optimizer='adam', metrics=['mse', 'mae'])
 
     # Train model
-    # logs = "logs/autoencoder/" + datetime.now().strftime("%Y%m%d-%H%M%S")
-    # tboard_callback = TensorBoard(log_dir=logs, histogram_freq=1, profile_batch='500,520')
     early_stopping_callback = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
     pruning_callback = pruning_callbacks.UpdatePruningStep()
-
-    # Print the model summary to verify the architecture
-    pruned_model.summary()
 
     history = pruned_model.fit(
         X_train_n, X_train_n,
@@ -103,17 +58,14 @@ def train_autoencoder(custom_paths=None, bits=6, integer=0, alpha=1, pruning_per
         callbacks=[early_stopping_callback, pruning_callback]
     ).history
 
-    # plot training
-    plot_training_history(history)
-
     # Save model
     stripped_model = strip_pruning(pruned_model)
     stripped_model.save(MODEL_STANDARD_DIR)
-    # Save pipeline
-    with open(MODEL_STANDARD_DIR + '/pipeline.pkl', 'wb') as f:
-        pickle.dump(pipeline, f)
 
     print("Model training completed and saved successfully.")
+
+    return history
+
 
 if __name__ == "__main__":
     # Example usage with default paths
