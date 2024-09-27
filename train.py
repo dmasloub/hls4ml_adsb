@@ -22,7 +22,7 @@ from src.model.autoencoder import QuantizedAutoencoder
 from src.utils.utils import get_windows_data
 from src.utils.visualization import plot_training_history
 
-def train_autoencoder(custom_paths=None):
+def train_autoencoder(custom_paths=None, bits=6, integer=0, alpha=1, pruning_percent=0.75, begin_step=2000, frequency=100):
     # Load data
     data_loader = DataLoader(paths=custom_paths)
     data_dict = data_loader.load_data()
@@ -34,14 +34,14 @@ def train_autoencoder(custom_paths=None):
     for df in tqdm(data_dict["train"], desc="Processing training data"):
         if df.empty:
             continue  # Skip empty DataFrames
-        
+
         windowed_data, windowed_labels = get_windows_data(
-            df[FEATURES], 
-            [0] * df.shape[0], 
-            window_size=WINDOW_SIZE_STANDARD_AUTOENCODER, 
+            df[FEATURES],
+            [0] * df.shape[0],
+            window_size=WINDOW_SIZE_STANDARD_AUTOENCODER,
             tsfresh=True
         )
-        
+
         X_windows_list.append(windowed_data)
         y_windows_list.append(windowed_labels)
 
@@ -51,9 +51,9 @@ def train_autoencoder(custom_paths=None):
 
     for X_window, y_window in tqdm(zip(X_windows_list, y_windows_list), desc="Extacting features"):
         features = extract_features(
-            X_window, 
-            column_id="id", 
-            column_sort="time", 
+            X_window,
+            column_id="id",
+            column_sort="time",
             default_fc_parameters=MinimalFCParameters()
         )
         imputed_features = impute(features)
@@ -69,12 +69,15 @@ def train_autoencoder(custom_paths=None):
 
     # Define model
     autoencoder = QuantizedAutoencoder(
-        input_dim=X_train_n.shape[1], 
+        input_dim=X_train_n.shape[1],
         encoding_dim=STANDARD_AUTOENCODER_ENCODING_DIMENSION,
+        bits=bits,
+        integer=integer,
+        alpha=alpha,
     )
 
     pruning_params = {
-        "pruning_schedule": pruning_schedule.ConstantSparsity(PERCENT, begin_step=BEGIN_STEP, frequency=FREQUENCY)
+        "pruning_schedule": pruning_schedule.ConstantSparsity(pruning_percent, begin_step=begin_step, frequency=frequency)
     }
     pruned_model = prune.prune_low_magnitude(autoencoder.model, **pruning_params)
 
@@ -87,7 +90,7 @@ def train_autoencoder(custom_paths=None):
     # tboard_callback = TensorBoard(log_dir=logs, histogram_freq=1, profile_batch='500,520')
     early_stopping_callback = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
     pruning_callback = pruning_callbacks.UpdatePruningStep()
-    
+
     # Print the model summary to verify the architecture
     pruned_model.summary()
 
@@ -99,7 +102,7 @@ def train_autoencoder(custom_paths=None):
         validation_split=0.2,
         callbacks=[early_stopping_callback, pruning_callback]
     ).history
-    
+
     # plot training
     plot_training_history(history)
 
