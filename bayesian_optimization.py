@@ -106,10 +106,19 @@ def objective_function(params, preprocessed_data_param, lambda_reg=0.5, retries=
             # Train the autoencoder with given parameters
 
             if attempt > 0:
+                params['integer'] = random.choice([4,6,8])
+                params['bits'] = random.choice([0,2])
                 params['alpha'] = random.uniform(0.1, 5.0)
                 params['pruning_percent'] = random.uniform(0.4, 0.7)
+                params['begin_step'] = random.randint(1000, 5000)
+                params['frequency'] = random.randint(200, 500)
+
+                integer = params['integer']
+                bits = params['bits']
                 alpha = params['alpha']
                 pruning_percent = params['pruning_percent']
+                begin_step = params['begin_step']
+                frequency = params['frequency']
 
             train_autoencoder(
                 preprocessed_data=preprocessed_data_param,
@@ -143,6 +152,10 @@ def objective_function(params, preprocessed_data_param, lambda_reg=0.5, retries=
                 # If any utilization is maxed out, assign a very bad score
                 score = -1
                 logger.info(f"Utilization exceeded limits: LUT={util_lut}%, FF={util_ff}%, DSP48E={util_dsp}%. Assigned score={score}")
+            elif total_lut <= 0 or total_dsp <= 0 or total_ff <= 0:
+                # If any total is zero error most have occured, assing a very bad score
+                score = -1
+                logger.info(f"Total of 0 not possible: LUT={total_lut}%, FF={total_ff}%, DSP48E={total_dsp}%. Assigned score={score}")
             else:
                 # Combine accuracy and utilization into a single score
                 # Normalize LUT, DSP, and FF utilizations based on their maximum values
@@ -397,7 +410,7 @@ res = gp_minimize(
     x0=x0,
     y0=y0,
     n_random_starts=max(5 - n_calls_done, 0),  # Ensure at least 5 random starts
-    random_state=42,
+    random_state=41,
     callback=[print_callback, checkpoint_saver],  # Add the callback here
 )
 
