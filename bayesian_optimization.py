@@ -9,6 +9,8 @@ from skopt.space import Integer, Real, Categorical
 from skopt.utils import use_named_args
 from skopt.callbacks import CheckpointSaver
 import warnings
+import time  # For retry delays
+import random
 
 from src.data_preparation import prepare_data
 from train import train_autoencoder
@@ -59,7 +61,7 @@ if not logger.handlers:
 search_space = [
     Categorical([4, 6, 8], name="bits"),
     Categorical([0, 2], name="integer"),
-    Real(0.1, 5, name="alpha"),
+    Real(0.1, 5.0, name="alpha"),  # No capping; original range restored
     Real(0.4, 0.7, name='pruning_percent'),
     Integer(1000, 5000, name='begin_step'),
     Integer(200, 500, name='frequency'),
@@ -71,7 +73,21 @@ preprocessed_data_path = 'preprocessed_data.pkl'
 # Prepare the data once (load if exists, else preprocess and save)
 preprocessed_data = prepare_data(save_path=preprocessed_data_path, load_if_exists=True)
 
-def objective_function(params, preprocessed_data_param, lambda_reg=0.5):
+
+def objective_function(params, preprocessed_data_param, lambda_reg=0.5, retries=3, delay=5):
+    """
+    Objective function to evaluate the autoencoder's performance based on hyperparameters.
+
+    Args:
+        params (dict): Dictionary of hyperparameters.
+        preprocessed_data_param: Preprocessed data for training, validation, and testing.
+        lambda_reg (float): Regularization parameter to balance accuracy and resource utilization.
+        retries (int): Number of retry attempts for transient errors.
+        delay (int): Delay between retries in seconds.
+
+    Returns:
+        float: Negative score to be minimized by the optimizer.
+    """
     # Extract parameters
     integer = params['integer']
     bits = params['bits']
@@ -84,67 +100,112 @@ def objective_function(params, preprocessed_data_param, lambda_reg=0.5):
     logger.info(f"Evaluating Parameters: bits={bits}, integer={integer}, alpha={alpha}, "
                 f"pruning_percent={pruning_percent}, begin_step={begin_step}, frequency={frequency}")
 
-    try:
-        # Train the autoencoder with given parameters
-        train_autoencoder(
-            preprocessed_data=preprocessed_data_param,
-            pruning_percent=pruning_percent,
-            begin_step=begin_step,
-            frequency=frequency,
-            bits=bits,
-            integer=integer,
-            alpha=alpha,
-        )
+    attempt = 0
+    while attempt < retries:
+        try:
+            # Train the autoencoder with given parameters
 
-        # Validate the autoencoder to get reconstruction error statistics
-        mu, std = validate_autoencoder(preprocessed_data=preprocessed_data_param)
+            if attempt > 0:
+                params['alpha'] = random.uniform(0.1, 5.0)
+                params['pruning_percent'] = random.uniform(0.4, 0.7)
+                alpha = params['alpha']
+                pruning_percent = params['pruning_percent']
 
-        # Test the autoencoder to get accuracy and resource utilization
-        accuracy, utilization = test_autoencoder(preprocessed_data=preprocessed_data_param, build_hls_model=True)
+            train_autoencoder(
+                preprocessed_data=preprocessed_data_param,
+                pruning_percent=pruning_percent,
+                begin_step=begin_step,
+                frequency=frequency,
+                bits=bits,
+                integer=integer,
+                alpha=alpha,
+            )
 
-        # Get the LUT utilization
-        total_lut = utilization.get('Total_LUT', 0) if utilization else float('inf')
-        util_lut = utilization.get('Utilization (%)_LUT', 0) if utilization else 100
+            # Validate the autoencoder to get reconstruction error statistics
+            mu, std = validate_autoencoder(preprocessed_data=preprocessed_data_param)
 
-        # Get the FF utilization
-        total_ff = utilization.get('Total_FF', 0) if utilization else float('inf')
-        util_ff = utilization.get('Utilization (%)_FF', 0) if utilization else 100
+            # Test the autoencoder to get accuracy and resource utilization
+            accuracy, utilization = test_autoencoder(preprocessed_data=preprocessed_data_param, build_hls_model=True)
 
-        # Get the DSP utilization
-        total_dsp = utilization.get('Total_DSP48E', 0) if utilization else float('inf')
-        util_dsp = utilization.get('Utilization (%)_DSP48E', 0) if utilization else 100
+            # Get the LUT utilization
+            total_lut = utilization.get('Total_LUT', 0) if utilization else float('inf')
+            util_lut = utilization.get('Utilization (%)_LUT', 0) if utilization else 100
 
-        if util_lut >= 100 or util_dsp >= 100 or util_ff >= 100:
-            # If any utilization is maxed out, assign a very bad score
-            score = -1
-            logger.info(f"Utilization exceeded limits: LUT={util_lut}%, FF={util_ff}%, DSP48E={util_dsp}%. Assigned score={score}")
-        else:
-            # Combine accuracy and utilization into a single score
-            # Normalize LUT, DSP, and FF utilizations based on their maximum values
-            normalized_lut = total_lut / 53200
-            normalized_dsp = total_dsp / 220
-            normalized_ff = total_ff / 106400
-            average_util = (normalized_lut + normalized_dsp + normalized_ff) / 3
-            score = accuracy - lambda_reg * average_util
+            # Get the FF utilization
+            total_ff = utilization.get('Total_FF', 0) if utilization else float('inf')
+            util_ff = utilization.get('Utilization (%)_FF', 0) if utilization else 100
 
-            # Log the results of the evaluation
-            logger.info(f"Result: accuracy={accuracy}, util_LUT={util_lut}, util_FF={util_ff}, "
-                        f"util_DSP48E={util_dsp}, score={score}")
+            # Get the DSP utilization
+            total_dsp = utilization.get('Total_DSP48E', 0) if utilization else float('inf')
+            util_dsp = utilization.get('Utilization (%)_DSP48E', 0) if utilization else 100
 
-        return -score  # Negative because most optimizers minimize the objective function
+            if util_lut >= 100 or util_dsp >= 100 or util_ff >= 100:
+                # If any utilization is maxed out, assign a very bad score
+                score = -1
+                logger.info(f"Utilization exceeded limits: LUT={util_lut}%, FF={util_ff}%, DSP48E={util_dsp}%. Assigned score={score}")
+            else:
+                # Combine accuracy and utilization into a single score
+                # Normalize LUT, DSP, and FF utilizations based on their maximum values
+                normalized_lut = total_lut / 53200
+                normalized_dsp = total_dsp / 220
+                normalized_ff = total_ff / 106400
+                average_util = (normalized_lut + normalized_dsp + normalized_ff) / 3
+                score = accuracy - lambda_reg * average_util
 
-    except Exception as e:
-        # Log any exceptions that occur during the evaluation
-        logger.error(f"Error during evaluation with parameters {params}: {e}", exc_info=True)
-        return float('inf')  # Assign a poor score in case of failure
+                # Log the results of the evaluation
+                logger.info(f"Result: accuracy={accuracy}, util_LUT={util_lut}, util_FF={util_ff}, "
+                            f"util_DSP48E={util_dsp}, score={score}")
+
+            return -score  # Negative because most optimizers minimize the objective function
+
+        except Exception as e:
+            # Log any exceptions that occur during the evaluation
+            attempt += 1
+            logger.error(f"Error during evaluation with parameters {params}: {e}. Attempt {attempt}/{retries}", exc_info=True)
+            if attempt < retries:
+                logger.info(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                logger.error(f"Failed after {retries} attempts. Assigning poor score.")
+                return float('inf')  # Assign a poor score in case of failure
+
 
 # Now define the objective function wrapper to include preprocessed_data
 @use_named_args(search_space)
 def objective(**params):
+    """
+    Wrapper for the objective function to integrate with scikit-optimize's gp_minimize.
+
+    Args:
+        **params: Hyperparameters to evaluate.
+
+    Returns:
+        float: Negative score to be minimized.
+    """
+    bits = params['bits']
+    integer = params['integer']
+    alpha = params['alpha']
+
+    # Enforce bits >= integer + 1 to ensure at least 1 fractional bit
+    if bits < integer + 1:
+        logger.warning(f"Skipping invalid parameter set: bits={bits}, integer={integer}")
+        return float('inf')  # Assign a poor score to discourage optimizer from choosing this set
+
+    # Proceed with valid parameter sets
     return objective_function(params, preprocessed_data)
+
 
 # Define a callback function to monitor optimization progress
 def print_callback(res):
+    """
+    Callback function to log the progress of the optimization after each trial.
+
+    Args:
+        res (skopt.OptimizeResult): The optimization result object.
+
+    Returns:
+        None
+    """
     # res is an OptimizeResult object
     iteration = len(res.func_vals)
     current_best = -np.min(res.func_vals)  # Since we are minimizing -score
@@ -158,24 +219,115 @@ def print_callback(res):
                 f"alpha={best_params[2]}, pruning_percent={best_params[3]}, "
                 f"begin_step={best_params[4]}, frequency={best_params[5]}\n")
 
-# Optionally, use CheckpointSaver to save optimization progress
+
+class BackupCheckpointSaver(CheckpointSaver):
+    """
+    A CheckpointSaver that saves checkpoints with backups to prevent data loss.
+    """
+    def __init__(self, checkpoint_path, compress=0, *, backup_checkpoint_path=None):
+        """
+        Initializes the BackupCheckpointSaver.
+
+        Args:
+            checkpoint_path (str): Path to the primary checkpoint file.
+            compress (int, optional): Compression level (default is 0).
+            backup_checkpoint_path (str, optional): Path to the backup checkpoint file.
+                                                   If None, defaults to '{checkpoint_path}.bak'.
+        """
+        super().__init__(checkpoint_path=checkpoint_path, compress=compress)  # Pass checkpoint_path correctly
+        self.backup_checkpoint_path = backup_checkpoint_path or f"{checkpoint_path}.bak"
+
+    def __call__(self, res):
+        """
+        Saves the current state to the primary checkpoint and creates a backup.
+
+        Args:
+            res (skopt.OptimizeResult): The optimization result object.
+
+        Returns:
+            None
+        """
+        # Save backup of the existing checkpoint
+        if os.path.exists(self.checkpoint_path):
+            try:
+                os.replace(self.checkpoint_path, self.backup_checkpoint_path)
+                logger.info(f"Backup checkpoint saved to '{self.backup_checkpoint_path}'.")
+            except Exception as e:
+                logger.error(f"Failed to create backup checkpoint: {e}")
+
+        # Save the new checkpoint
+        with open(self.checkpoint_path, 'wb') as f:
+            pickle.dump(res, f, protocol=pickle.HIGHEST_PROTOCOL)
+        logger.info(f"Checkpoint saved to '{self.checkpoint_path}'.")
+
+
 checkpoint_file = "optimization_checkpoint.pkl"
-checkpoint_saver = CheckpointSaver(checkpoint_file, compress=9)
+backup_checkpoint_file = "optimization_checkpoint.bak"
+
+checkpoint_saver = BackupCheckpointSaver(
+    checkpoint_path=checkpoint_file,                # Updated parameter name
+    compress=9,
+    backup_checkpoint_path=backup_checkpoint_file  # Updated parameter name
+)
 
 # -------------------------------
 # Resuming Optimization Logic
 # -------------------------------
-def load_checkpoint(checkpoint_path):
+def load_checkpoint(checkpoint_path, backup_checkpoint_path):
+    """
+    Loads the optimization checkpoint if it exists and is valid.
+
+    Args:
+        checkpoint_path (str): Path to the primary checkpoint file.
+        backup_checkpoint_path (str): Path to the backup checkpoint file.
+
+    Returns:
+        skopt.OptimizeResult or None: Loaded optimization result or None if no valid checkpoint exists.
+    """
     if os.path.exists(checkpoint_path):
-        with open(checkpoint_path, 'rb') as f:
-            res = pickle.load(f)
-        logger.info(f"Loaded checkpoint from '{checkpoint_path}'.")
-        return res
+        try:
+            with open(checkpoint_path, 'rb') as f:
+                res = pickle.load(f)
+            logger.info(f"Loaded checkpoint from '{checkpoint_path}'.")
+            return res
+        except pickle.UnpicklingError:
+            logger.error(f"Checkpoint file '{checkpoint_path}' is corrupted.")
+            # Attempt to load from backup
+            if os.path.exists(backup_checkpoint_path):
+                try:
+                    with open(backup_checkpoint_path, 'rb') as f:
+                        res = pickle.load(f)
+                    logger.info(f"Loaded backup checkpoint from '{backup_checkpoint_path}'.")
+                    return res
+                except pickle.UnpicklingError:
+                    logger.error(f"Backup checkpoint file '{backup_checkpoint_path}' is also corrupted.")
+            # If backup also fails, delete corrupted checkpoint(s)
+            logger.info("Deleting corrupted checkpoint files.")
+            os.remove(checkpoint_path)
+            if os.path.exists(backup_checkpoint_path):
+                os.remove(backup_checkpoint_path)
+            return None
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while loading the checkpoint: {e}")
+            logger.info("Deleting corrupted checkpoint files.")
+            os.remove(checkpoint_path)
+            if os.path.exists(backup_checkpoint_path):
+                os.remove(backup_checkpoint_path)
+            return None
     else:
         logger.info(f"No checkpoint found at '{checkpoint_path}'. Starting fresh optimization.")
         return None
 
 def get_initial_data(res):
+    """
+    Extracts initial data from the loaded checkpoint.
+
+    Args:
+        res (skopt.OptimizeResult or None): Loaded optimization result.
+
+    Returns:
+        tuple: (x0, y0) where x0 is list of parameter sets and y0 is list of function values.
+    """
     if res is not None:
         x0 = res.x_iters
         y0 = res.func_vals
@@ -184,7 +336,7 @@ def get_initial_data(res):
         return None, None
 
 # Load existing checkpoint if available
-existing_res = load_checkpoint(checkpoint_file)
+existing_res = load_checkpoint(checkpoint_file, backup_checkpoint_file)
 
 # Extract initial data if checkpoint exists
 x0, y0 = get_initial_data(existing_res)
@@ -200,6 +352,38 @@ if n_calls_remaining <= 0:
     logger.info("Skipping optimization.")
     # Optionally, load the best parameters from the checkpoint
     if existing_res:
+        def print_optimal_results(res, search_space):
+            """
+            Logs the optimal parameters and their corresponding score after optimization.
+
+            Args:
+                res (skopt.OptimizeResult): The optimization result object.
+                search_space (list): The search space used for optimization.
+
+            Returns:
+                None
+            """
+            # Extract parameter names from the search space
+            parameter_names = [dim.name for dim in search_space]
+
+            # Create a dictionary of optimal parameters
+            optimal_parameters = dict(zip(parameter_names, res.x))
+
+            # Log the optimal parameters
+            logger.info("\nOptimal Parameters Found:")
+            for name, value in optimal_parameters.items():
+                logger.info(f"  {name}: {value}")
+
+            # Log the best score (remember to negate it back)
+            best_score = -res.fun
+            logger.info(f"\nBest Score: {best_score}")
+
+            # Optionally, log additional information
+            logger.info("\nAdditional Optimization Details:")
+            logger.info(f"  Number of calls: {res.func_vals.shape[0]}")
+            logger.info(f"  Best function value: {res.fun}")
+            logger.info(f"  Location of best function value: {res.x}")
+
         print_optimal_results(existing_res, search_space)
     sys.exit(0)
 
@@ -219,6 +403,16 @@ res = gp_minimize(
 
 # After optimization, output the optimal values
 def print_optimal_results(res, search_space):
+    """
+    Logs the optimal parameters and their corresponding score after optimization.
+
+    Args:
+        res (skopt.OptimizeResult): The optimization result object.
+        search_space (list): The search space used for optimization.
+
+    Returns:
+        None
+    """
     # Extract parameter names from the search space
     parameter_names = [dim.name for dim in search_space]
 
