@@ -51,7 +51,7 @@ def train_autoencoder(preprocessed_data, bits=4, integer=0, alpha=1, pruning_per
 
     history = pruned_model.fit(
         X_train_n, X_train_n,
-        epochs=50,
+        epochs=200,
         batch_size=128,
         shuffle=True,
         validation_split=0.2,
