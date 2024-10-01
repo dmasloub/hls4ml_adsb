@@ -61,8 +61,8 @@ if not logger.handlers:
 search_space = [
     Categorical([4, 6, 8], name="bits"),
     Categorical([0, 2], name="integer"),
-    Real(0.1, 5.0, name="alpha"),  # No capping; original range restored
-    Real(0.4, 0.7, name='pruning_percent'),
+    Real(0.10005654535341, 4.99999543594999, name="alpha"),
+    Real(0.40000000000001, 0.69999999999999, name='pruning_percent'),
     Integer(1000, 5000, name='begin_step'),
     Integer(200, 500, name='frequency'),
 ]
@@ -74,7 +74,7 @@ preprocessed_data_path = 'preprocessed_data.pkl'
 preprocessed_data = prepare_data(save_path=preprocessed_data_path, load_if_exists=True)
 
 
-def objective_function(params, preprocessed_data_param, lambda_reg=0.5, retries=3, delay=5):
+def objective_function(params, preprocessed_data_param, lambda_reg=0.5):
     """
     Objective function to evaluate the autoencoder's performance based on hyperparameters.
 
@@ -82,8 +82,6 @@ def objective_function(params, preprocessed_data_param, lambda_reg=0.5, retries=
         params (dict): Dictionary of hyperparameters.
         preprocessed_data_param: Preprocessed data for training, validation, and testing.
         lambda_reg (float): Regularization parameter to balance accuracy and resource utilization.
-        retries (int): Number of retry attempts for transient errors.
-        delay (int): Delay between retries in seconds.
 
     Returns:
         float: Negative score to be minimized by the optimizer.
@@ -100,87 +98,63 @@ def objective_function(params, preprocessed_data_param, lambda_reg=0.5, retries=
     logger.info(f"Evaluating Parameters: bits={bits}, integer={integer}, alpha={alpha}, "
                 f"pruning_percent={pruning_percent}, begin_step={begin_step}, frequency={frequency}")
 
-    attempt = 0
-    while attempt < retries:
-        try:
-            # Train the autoencoder with given parameters
+    try:
+        # Train the autoencoder with given parameters
+        train_autoencoder(
+            preprocessed_data=preprocessed_data_param,
+            pruning_percent=pruning_percent,
+            begin_step=begin_step,
+            frequency=frequency,
+            bits=bits,
+            integer=integer,
+            alpha=alpha,
+        )
 
-            if attempt > 0:
-                params['integer'] = random.choice([4,6,8])
-                params['bits'] = random.choice([0,2])
-                params['alpha'] = random.uniform(0.1, 5.0)
-                params['pruning_percent'] = random.uniform(0.4, 0.7)
-                params['begin_step'] = random.randint(1000, 5000)
-                params['frequency'] = random.randint(200, 500)
+        # Validate the autoencoder to get reconstruction error statistics
+        mu, std = validate_autoencoder(preprocessed_data=preprocessed_data_param)
 
-                integer = params['integer']
-                bits = params['bits']
-                alpha = params['alpha']
-                pruning_percent = params['pruning_percent']
-                begin_step = params['begin_step']
-                frequency = params['frequency']
+        # Test the autoencoder to get accuracy and resource utilization
+        accuracy, utilization = test_autoencoder(preprocessed_data=preprocessed_data_param, build_hls_model=True)
 
-            train_autoencoder(
-                preprocessed_data=preprocessed_data_param,
-                pruning_percent=pruning_percent,
-                begin_step=begin_step,
-                frequency=frequency,
-                bits=bits,
-                integer=integer,
-                alpha=alpha,
-            )
+        # Get the LUT utilization
+        total_lut = utilization.get('Total_LUT', 0) if utilization else float('inf')
+        util_lut = utilization.get('Utilization (%)_LUT', 0) if utilization else 100
 
-            # Validate the autoencoder to get reconstruction error statistics
-            mu, std = validate_autoencoder(preprocessed_data=preprocessed_data_param)
+        # Get the FF utilization
+        total_ff = utilization.get('Total_FF', 0) if utilization else float('inf')
+        util_ff = utilization.get('Utilization (%)_FF', 0) if utilization else 100
 
-            # Test the autoencoder to get accuracy and resource utilization
-            accuracy, utilization = test_autoencoder(preprocessed_data=preprocessed_data_param, build_hls_model=True)
+        # Get the DSP utilization
+        total_dsp = utilization.get('Total_DSP48E', 0) if utilization else float('inf')
+        util_dsp = utilization.get('Utilization (%)_DSP48E', 0) if utilization else 100
 
-            # Get the LUT utilization
-            total_lut = utilization.get('Total_LUT', 0) if utilization else float('inf')
-            util_lut = utilization.get('Utilization (%)_LUT', 0) if utilization else 100
+        if util_lut >= 100 or util_dsp >= 100 or util_ff >= 100:
+            # If any utilization is maxed out, assign a very bad score
+            score = -1
+            logger.info(f"Utilization exceeded limits: LUT={util_lut}%, FF={util_ff}%, DSP48E={util_dsp}%. Assigned score={score}")
+        elif total_lut <= 0 or total_dsp <= 0 or total_ff <= 0:
+            # If any total is zero error most have occured, assing a very bad score
+            score = -1
+            logger.info(f"Total of 0 not possible: LUT={total_lut}%, FF={total_ff}%, DSP48E={total_dsp}%. Assigned score={score}")
+        else:
+            # Combine accuracy and utilization into a single score
+            # Normalize LUT, DSP, and FF utilizations based on their maximum values
+            normalized_lut = total_lut / 53200
+            normalized_dsp = total_dsp / 220
+            normalized_ff = total_ff / 106400
+            average_util = (normalized_lut + normalized_dsp + normalized_ff) / 3
+            score = accuracy - lambda_reg * average_util
 
-            # Get the FF utilization
-            total_ff = utilization.get('Total_FF', 0) if utilization else float('inf')
-            util_ff = utilization.get('Utilization (%)_FF', 0) if utilization else 100
+            # Log the results of the evaluation
+            logger.info(f"Result: accuracy={accuracy}, util_LUT={util_lut}, util_FF={util_ff}, "
+                        f"util_DSP48E={util_dsp}, score={score}")
 
-            # Get the DSP utilization
-            total_dsp = utilization.get('Total_DSP48E', 0) if utilization else float('inf')
-            util_dsp = utilization.get('Utilization (%)_DSP48E', 0) if utilization else 100
+        return -score  # Negative because most optimizers minimize the objective function
 
-            if util_lut >= 100 or util_dsp >= 100 or util_ff >= 100:
-                # If any utilization is maxed out, assign a very bad score
-                score = -1
-                logger.info(f"Utilization exceeded limits: LUT={util_lut}%, FF={util_ff}%, DSP48E={util_dsp}%. Assigned score={score}")
-            elif total_lut <= 0 or total_dsp <= 0 or total_ff <= 0:
-                # If any total is zero error most have occured, assing a very bad score
-                score = -1
-                logger.info(f"Total of 0 not possible: LUT={total_lut}%, FF={total_ff}%, DSP48E={total_dsp}%. Assigned score={score}")
-            else:
-                # Combine accuracy and utilization into a single score
-                # Normalize LUT, DSP, and FF utilizations based on their maximum values
-                normalized_lut = total_lut / 53200
-                normalized_dsp = total_dsp / 220
-                normalized_ff = total_ff / 106400
-                average_util = (normalized_lut + normalized_dsp + normalized_ff) / 3
-                score = accuracy - lambda_reg * average_util
-
-                # Log the results of the evaluation
-                logger.info(f"Result: accuracy={accuracy}, util_LUT={util_lut}, util_FF={util_ff}, "
-                            f"util_DSP48E={util_dsp}, score={score}")
-
-            return -score  # Negative because most optimizers minimize the objective function
-
-        except Exception as e:
-            # Log any exceptions that occur during the evaluation
-            attempt += 1
-            logger.error(f"Error during evaluation with parameters {params}: {e}. Attempt {attempt}/{retries}", exc_info=True)
-            if attempt < retries:
-                logger.info(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
-            else:
-                logger.error(f"Failed after {retries} attempts. Assigning poor score.")
-                return float('inf')  # Assign a poor score in case of failure
+    except Exception as e:
+        # Log any exceptions that occur during the evaluation
+        logger.error(f"Error during evaluation with parameters {params}: {e}.", exc_info=True)
+        return 1  # Assign a poor score in case of failure
 
 
 # Now define the objective function wrapper to include preprocessed_data
@@ -201,7 +175,7 @@ def objective(**params):
 
     # Enforce bits >= integer + 1 to ensure at least 1 fractional bit
     if bits < integer + 1:
-        logger.warning(f"Skipping invalid parameter set: bits={bits}, integer={integer}")
+        logger.warning(f"Skipping invalid parameter set: bits={bits}, integer={integer}, alpha={alpha}")
         return float('inf')  # Assign a poor score to discourage optimizer from choosing this set
 
     # Proceed with valid parameter sets
@@ -231,7 +205,6 @@ def print_callback(res):
     logger.info(f"Best Parameters So Far: bits={best_params[0]}, integer={best_params[1]}, "
                 f"alpha={best_params[2]}, pruning_percent={best_params[3]}, "
                 f"begin_step={best_params[4]}, frequency={best_params[5]}\n")
-
 
 class BackupCheckpointSaver(CheckpointSaver):
     """
