@@ -1,27 +1,29 @@
 # src/models/autoencoder.py
 
-from typing import Optional
+from typing import Optional, List
 import tensorflow as tf
-from tensorflow import keras
-from qkeras import QDense, QActivation
-from qkeras.quantizers import quantized_bits, quantized_relu
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input
+from qkeras import QDense, quantized_bits
 from src.config.config import ModelConfig
 from src.utils.logger import Logger
 
+
 class QuantizedAutoencoder:
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, input_dim):
         """
-        Initializes the QuantizedAutoencoder with the provided configuration.
+        Initializes the QuantizedAutoencoder with the provided ModelConfig.
 
         Args:
             config (ModelConfig): Configuration object containing model parameters.
         """
         self.config = config
-        self.logger = Logger.get_logger()
+        self.input_dim = input_dim
+        self.logger = Logger.get_logger(__name__)  # Use module-specific logger
         self.model = self._build_model()
-        self.compile_model()
+        self.compile()
 
-    def _build_model(self) -> keras.Model:
+    def _build_model(self) -> Model:
         """
         Builds the quantized autoencoder model architecture.
 
@@ -29,77 +31,108 @@ class QuantizedAutoencoder:
             keras.Model: The constructed autoencoder model.
         """
         try:
-            input_dim = self.config.input_dim
+            # Accessing configuration parameters directly from ModelConfig
+            input_dim = self.input_dim
             encoding_dim = self.config.encoding_dim
+            bits = self.config.bits
+            integer_bits = self.config.integer_bits
+            alpha = self.config.alpha
 
-            input_layer = keras.Input(shape=(input_dim,), name='input_layer')
+            # Define the input layer with the correct shape
+            input_layer = Input(shape=(input_dim,), name='input_layer')
+            self.logger.debug(f"Input layer shape: {(None, input_dim)}")
 
-            # Encoder
-            encoder = QDense(
+            # Define the hidden (encoder) layer with quantization
+            hidden_layer = QDense(
                 units=encoding_dim,
-                name='encoder_dense',
-                kernel_quantizer=quantized_bits(self.config.bits, self.config.integer_bits, alpha=self.config.alpha),
-                bias_quantizer=quantized_bits(self.config.bits, self.config.integer_bits, alpha=self.config.alpha)
+                kernel_quantizer=quantized_bits(bits, integer_bits, alpha=alpha),
+                bias_quantizer=quantized_bits(bits, integer_bits, alpha=alpha),
+                activation="relu",
+                name='hidden_layer'
             )(input_layer)
-            encoder = QActivation(
-                activation='relu',
-                name='encoder_activation'
-            )(encoder)
+            self.logger.debug(f"Hidden layer shape: {hidden_layer.shape}")
 
-            # Decoder
-            decoder = QDense(
+            # Define the output (decoder) layer with quantization
+            output_layer = QDense(
                 units=input_dim,
-                name='decoder_dense',
-                kernel_quantizer=quantized_bits(self.config.bits, self.config.integer_bits, alpha=self.config.alpha),
-                bias_quantizer=quantized_bits(self.config.bits, self.config.integer_bits, alpha=self.config.alpha)
-            )(encoder)
-            decoder = QActivation(
-                activation='sigmoid',
-                name='decoder_activation'
-            )(decoder)
+                kernel_quantizer=quantized_bits(bits, integer_bits, alpha=alpha),
+                bias_quantizer=quantized_bits(bits, integer_bits, alpha=alpha),
+                activation="relu",
+                name='output_layer'
+            )(hidden_layer)
+            self.logger.debug(f"Output layer shape: {output_layer.shape}")
 
-            # Autoencoder Model
-            autoencoder = keras.Model(inputs=input_layer, outputs=decoder, name='quantized_autoencoder')
+            # Construct the autoencoder model
+            autoencoder = Model(inputs=input_layer, outputs=output_layer, name='quantized_autoencoder')
             self.logger.info("Quantized Autoencoder model built successfully.")
+            self.logger.debug(autoencoder.summary(print_fn=lambda x: self.logger.debug(x)))
             return autoencoder
         except Exception as e:
             self.logger.error(f"Error building the Quantized Autoencoder model: {e}")
             raise
 
-    def compile_model(self):
+    def compile(self):
         """
         Compiles the autoencoder model with specified optimizer, loss, and metrics.
         """
         try:
-            optimizer = keras.optimizers.Adam(learning_rate=self.config.learning_rate)
-            self.model.compile(optimizer=optimizer, loss='mse', metrics=['mae'])
+            learning_rate = self.config.learning_rate
+            optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+            self.model.compile(
+                optimizer=optimizer,
+                loss='mean_squared_error',
+                metrics=['mse', 'mae']
+            )
             self.logger.info("Quantized Autoencoder model compiled successfully.")
         except Exception as e:
             self.logger.error(f"Error compiling the Quantized Autoencoder model: {e}")
+            raise
+
+    def summary(self):
+        """
+        Prints the model summary.
+        """
+        try:
+            self.model.summary()
+        except Exception as e:
+            self.logger.error(f"Error printing model summary: {e}")
             raise
 
     def train(
         self,
         train_data: tf.data.Dataset,
         validation_data: Optional[tf.data.Dataset] = None,
-        callbacks: Optional[List[keras.callbacks.Callback]] = None
-    ) -> keras.callbacks.History:
+        callbacks: Optional[List[tf.keras.callbacks.Callback]] = None
+    ) -> tf.keras.callbacks.History:
         """
         Trains the autoencoder model on the provided training data.
 
         Args:
             train_data (tf.data.Dataset): Training dataset.
             validation_data (Optional[tf.data.Dataset], optional): Validation dataset. Defaults to None.
-            callbacks (Optional[List[keras.callbacks.Callback]], optional): List of callbacks. Defaults to None.
+            callbacks (Optional[List[tf.keras.callbacks.Callback]], optional): List of callbacks. Defaults to None.
 
         Returns:
-            keras.callbacks.History: Training history.
+            tf.keras.callbacks.History: Training history.
         """
         try:
+            epochs = self.config.epochs
             self.logger.info("Starting training of the Quantized Autoencoder model.")
+
+            # Removed redundant mapping
+            # train_data = train_data.map(lambda x: (x, x))
+            # self.logger.debug("Mapped training data to (x, x).")
+
+            if validation_data is not None:
+                # Similarly map validation_data to (x, x) if not already done
+                # Removed redundant mapping
+                # validation_data = validation_data.map(lambda x: (x, x))
+                # self.logger.debug("Mapped validation data to (x, x).")
+                pass  # No action needed
+
             history = self.model.fit(
                 train_data,
-                epochs=self.config.epochs,
+                epochs=epochs,
                 validation_data=validation_data,
                 callbacks=callbacks
             )
@@ -131,8 +164,14 @@ class QuantizedAutoencoder:
             filepath (str): Path from where to load the model.
         """
         try:
-            self.model = keras.models.load_model(filepath, compile=False)
-            self.compile_model()  # Re-compile after loading
+            # Define custom_objects dictionary
+            custom_objects = {
+                'QDense': QDense,
+                'quantized_bits': quantized_bits
+            }
+
+            self.model = tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
+            self.compile()  # Re-compile after loading
             self.logger.info(f"Model loaded successfully from {filepath}.")
         except Exception as e:
             self.logger.error(f"Error loading the model: {e}")

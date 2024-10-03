@@ -1,82 +1,78 @@
 # src/scripts/test.py
 
 import os
-from distutils.command.config import config
+import pickle
 
-from src.config import Config
+import tensorflow as tf
 from src.utils.common_utils import CommonUtils
 from src.utils.logger import Logger
 from src.config.config import Config
 from src.models.autoencoder import QuantizedAutoencoder
-from src.data.data_preparation import prepare_data
-from src.evaluation.evaluator import Evaluator
-from src.converters.hls_converter import HLSConverter
+from src.data.data_loader import DataLoader
+from src.data.data_preparation import DataPreparer
+from src.evaluation.evaluator import Evaluator  # Assuming you have an Evaluator class
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
 
 
 def main():
     # Initialize configuration and logger
     config = Config()
-    logger = Logger.get_logger(__name__, log_level=logging.INFO,
-                               log_file=os.path.join(config.paths.logs_dir, 'test.log'))
+    logger = Logger.get_logger(__name__)  # Automatically assigns 'src_scripts_test.log'
 
     logger.info("Starting testing process.")
 
     try:
-        # Prepare data
-        preprocessed_data = prepare_data()
-        logger.info("Data preparation completed.")
+        # Set random seeds for reproducibility
+        CommonUtils.set_seeds(seed=config.optimization.random_state)
 
-        # Load the trained model
-        model_path = os.path.join(config.paths.model_standard_dir, 'autoencoder.h5')
-        if not os.path.exists(model_path):
-            logger.error(f"Trained model not found at {model_path}.")
-            raise FileNotFoundError(f"Trained model not found at {model_path}.")
+        # Define the path for preprocessed data
+        preprocessed_data_path = config.paths.preprocessed_data_path
 
-        input_dim = preprocessed_data['test_noise']['X_n'].shape[1]
-        autoencoder = QuantizedAutoencoder(
-            input_dim=input_dim,
-            encoding_dim=config.model.encoding_dim,
-            bits=config.model.bits,
-            integer=config.model.integer_bits,
-            alpha=config.model.alpha
-        )
-        autoencoder.load(model_path)
-        logger.info(f"Loaded trained model from {model_path}.")
+        # Check if preprocessed data already exists
+        if os.path.exists(preprocessed_data_path):
+            logger.info(f"Preprocessed data found at '{preprocessed_data_path}'. Loading data.")
+            with open(preprocessed_data_path, 'rb') as f:
+                preprocessed_datasets = pickle.load(f)
+            logger.info("Preprocessed data loaded successfully.")
+        else:
+            logger.info("Preprocessed data not found. Proceeding with data loading and preprocessing.")
+            # Load raw datasets
+            data_loader = DataLoader(config)
+            raw_datasets = data_loader.get_all_datasets()
+            logger.info("Raw datasets loaded successfully.")
 
-        # Initialize Evaluator
-        evaluator = Evaluator(config)
+            # Initialize DataPreparer and preprocess datasets
+            data_preparer = DataPreparer(config)
+            preprocessed_datasets = data_preparer.prepare_datasets(raw_datasets, save_path=preprocessed_data_path)
+            logger.info("Data preprocessing completed and saved.")
 
-        # Evaluate the model on test datasets
+        # Get test data (assuming multiple test datasets)
         test_datasets = ['test_noise', 'test_landing', 'test_departing', 'test_manoeuver']
-        overall_accuracy = {}
-        overall_utilization = {}
+        results = {}
 
-        for dataset in test_datasets:
-            logger.info(f"Evaluating on dataset: {dataset}")
-            X_test_n = preprocessed_data[dataset]['X_n']
-            y_test = preprocessed_data[dataset]['y']
+        # Define model
+        autoencoder = QuantizedAutoencoder(config.model, preprocessed_datasets.get(test_datasets[0])['X_scaled'].shape[1])
 
-            # Test the autoencoder (without building HLS model)
-            accuracy, utilization = evaluator.evaluate_model(
-                model=autoencoder,
-                X_test=X_test_n,
-                y_test=y_test
-            )
+        for test_set in test_datasets:
+            df_test = preprocessed_datasets.get(test_set)
+            if df_test is None:
+                logger.warning(f"No data found for {test_set}. Skipping.")
+                continue
 
-            overall_accuracy[dataset] = accuracy
-            overall_utilization[dataset] = utilization  # May be None if not built
+            X_test = df_test['X_scaled']
+            logger.info(f"Shape of {test_set} data: {X_test.shape}")  # Should be (num_samples, 6)
 
-            # Optionally, you can generate classification reports here
-            report_path = os.path.join(config.paths.logs_dir, f'classification_report_{dataset}.csv')
-            evaluator.generate_classification_report(
-                y_true=y_test,
-                y_pred=evaluator.get_predictions(),
-                report_path=report_path
-            )
+            # Prepare data for testing as tf.data.Dataset
+            test_dataset = tf.data.Dataset.from_tensor_slices(X_test).batch(config.model.batch_size).prefetch(tf.data.AUTOTUNE)
+            logger.info(f"{test_set} dataset prepared.")
 
-        logger.info("Testing on all datasets completed.")
-        logger.info(f"Overall Accuracies: {overall_accuracy}")
-        logger.info(f"Overall Resource Utilization: {overall_utilization}")
+            # Perform evaluation (assuming Evaluator handles the logic)
+            evaluator = Evaluator(config)
+            metrics = evaluator.evaluate_model(autoencoder, test_dataset)
+            results[test_set] = metrics
+            logger.info(f"Metrics for {test_set}: {metrics}")
+
+        logger.info(f"All test metrics: {results}")
 
     except Exception as e:
         logger.error(f"An error occurred during testing: {e}", exc_info=True)

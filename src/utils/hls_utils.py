@@ -18,7 +18,7 @@ class HLSUtils:
         """
         Initializes the HLSUtils class with a logger.
         """
-        self.logger = Logger.get_logger(__name__, log_level=logging.INFO)
+        self.logger = Logger.get_logger(__name__)
 
     @staticmethod
     def _read_report(report_path: str) -> str:
@@ -81,7 +81,7 @@ class HLSUtils:
         Returns:
             Optional[pd.DataFrame]: DataFrame containing the table data or None if not found.
         """
-        logger = Logger.get_logger(__name__, log_level=logging.INFO)
+        logger = Logger.get_logger(__name__)
         if not os.path.exists(report_path):
             logger.error(f"Report file not found at {report_path}.")
             raise FileNotFoundError(f"Report file not found at {report_path}.")

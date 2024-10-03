@@ -11,10 +11,11 @@ class PathsConfig:
     data_test_landing_dir: str = "data/test/landing/"
     data_test_departing_dir: str = "data/test/departing/"
     data_test_manoeuver_dir: str = "data/test/manoeuver/"
-    model_dir: str = "qkeras_model/"
+    model_dir: str = "qkeras_model"
     hls_output_dir: str = "hls_model/"
     logs_dir: str = "logs/"
     checkpoints_dir: str = "checkpoints/"
+    preprocessed_data_path: str = "preprocessed_data.pkl"
 
 @dataclass
 class DataConfig:
@@ -29,12 +30,15 @@ class DataConfig:
 
 @dataclass
 class ModelConfig:
-    input_dim: int = 10
-    encoding_dim: int = 5
-    bits: int = 8
+    # input_dim: int = 6                # Updated to match the number of features
+    encoding_dim: int = 10
+    bits: int = 6                      # Changed to 6 to match provided code
     integer_bits: int = 0
     alpha: float = 1.0
     learning_rate: float = 0.001
+    batch_size: int = 32
+    epochs: int = 10
+    validation_split: float = 0.2      # Optional: If using separate validation data, can be omitted
 
 @dataclass
 class OptimizationConfig:

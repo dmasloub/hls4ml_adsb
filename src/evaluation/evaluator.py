@@ -2,6 +2,8 @@
 
 import os
 import pickle
+from typing import Dict, Any
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import precision_score, recall_score, accuracy_score
@@ -10,8 +12,8 @@ from scipy import stats
 
 from src.utils.common_utils import CommonUtils
 from src.utils.logger import Logger
-from src.utils.evaluation import classification_report, get_average_detection_delay
-from src.utils.hls_utils import extract_utilization
+from src.utils.evaluation import EvaluationUtils
+from src.utils.hls_utils import HLSUtils
 
 
 class Evaluator:
@@ -25,7 +27,7 @@ class Evaluator:
         self.config = config
         self.logger = Logger.get_logger(__name__)
 
-    def evaluate_model(self, model, X_test, y_test):
+    def evaluate_model(self, model, X_test: np.ndarray, y_test: np.ndarray) -> Dict[str, Any]:
         """
         Evaluates the autoencoder model on the test dataset.
 
@@ -49,7 +51,7 @@ class Evaluator:
             self.logger.debug("Reconstruction errors calculated.")
 
             # Load mean and std from metrics.pkl
-            metrics_path = os.path.join(self.config.paths.model_standard_dir, 'metrics.pkl')
+            metrics_path = os.path.join(self.config.paths.model_dir, 'metrics.pkl')
             if not os.path.exists(metrics_path):
                 raise FileNotFoundError(f"Metrics file not found at {metrics_path}.")
 
@@ -76,8 +78,8 @@ class Evaluator:
             self.logger.info(f"Model Precision: {precision}")
             self.logger.info(f"Model Recall: {recall}")
 
-            # Calculate average detection delay
-            avg_delay = get_average_detection_delay(y_true=y_test, y_pred=y_pred)
+            # Calculate average detection delay using EvaluationUtils
+            avg_delay = EvaluationUtils.get_average_detection_delay(y_true=y_test.tolist(), y_pred=y_pred.tolist())
             self.logger.info(f"Average Detection Delay: {avg_delay}")
 
             # Compile metrics
@@ -97,13 +99,13 @@ class Evaluator:
             self.logger.error(f"Error during model evaluation: {e}", exc_info=True)
             raise
 
-    def generate_classification_report(self, y_true, y_pred, report_path):
+    def generate_classification_report(self, y_true: np.ndarray, y_pred: np.ndarray, report_path: str) -> pd.DataFrame:
         """
         Generates and saves a classification report.
 
         Args:
             y_true (np.ndarray): True labels.
-            y_pred (np.ndarray): Predicted labels.
+            y_pred (np.ndarray): Predicted labels by the model.
             report_path (str): Path to save the classification report.
 
         Returns:
@@ -111,7 +113,8 @@ class Evaluator:
         """
         try:
             self.logger.info("Generating classification report.")
-            report_df = classification_report(y_true, y_pred)
+            # Pass y_true_l as a list containing y_true and provide classifier predictions as kwargs
+            report_df = EvaluationUtils.classification_report([y_true.tolist()], Autoencoder=y_pred.tolist())
             report_df.to_csv(report_path, index=False)
             self.logger.info(f"Classification report saved to {report_path}.")
             return report_df
@@ -119,7 +122,7 @@ class Evaluator:
             self.logger.error(f"Error generating classification report: {e}", exc_info=True)
             raise
 
-    def extract_resource_utilization(self, report_path):
+    def extract_resource_utilization(self, report_path: str) -> Dict[str, Any]:
         """
         Extracts FPGA resource utilization from the HLS synthesis report.
 
@@ -131,7 +134,7 @@ class Evaluator:
         """
         try:
             self.logger.info(f"Extracting resource utilization from report: {report_path}")
-            utilization = extract_utilization(report_path)
+            utilization = HLSUtils.extract_utilization(report_path)
             self.logger.info("Resource utilization extracted successfully.")
             self.logger.debug(f"Resource Utilization: {utilization}")
             return utilization
@@ -139,7 +142,7 @@ class Evaluator:
             self.logger.error(f"Error extracting resource utilization: {e}", exc_info=True)
             raise
 
-    def evaluate_resource_utilization(self, utilization):
+    def evaluate_resource_utilization(self, utilization: Dict[str, Any]) -> Dict[str, Any]:
         """
         Evaluates the resource utilization metrics.
 
@@ -168,4 +171,3 @@ class Evaluator:
         except Exception as e:
             self.logger.error(f"Error evaluating resource utilization: {e}", exc_info=True)
             raise
-

@@ -4,30 +4,31 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 from src.config.config import Config
+from typing import Optional
+
 
 class Logger:
-    _logger_instance = None
+    """
+    A Logger class to manage multiple loggers, each writing to its own log file.
+    """
+    _loggers = {}
 
     @staticmethod
-    def get_logger(name: str = __name__) -> logging.Logger:
+    def get_logger(name: str = __name__, log_filename: Optional[str] = None) -> logging.Logger:
         """
-        Static access method to get the logger instance.
+        Retrieves a logger instance. If it doesn't exist, creates a new one with specified configurations.
 
         Args:
             name (str, optional): Name of the logger. Defaults to __name__.
+            log_filename (str, optional): Specific log file name for this logger.
+                If None, defaults to "{sanitized_name}.log" in the logs directory.
 
         Returns:
             logging.Logger: Configured logger instance.
         """
-        if Logger._logger_instance is None:
-            Logger._initialize_logger()
-        return logging.getLogger(name)
+        if name in Logger._loggers:
+            return Logger._loggers[name]
 
-    @staticmethod
-    def _initialize_logger():
-        """
-        Initializes the logger with handlers, formatters, and log levels.
-        """
         # Initialize configuration to access log directory
         config = Config()
 
@@ -36,11 +37,15 @@ class Logger:
         os.makedirs(log_dir, exist_ok=True)
 
         # Define log file path
-        log_file = os.path.join(log_dir, "optimization.log")
+        if log_filename is None:
+            # Sanitize logger name to create a valid file name
+            sanitized_name = name.replace('.', '_').replace('/', '_')
+            log_filename = f"{sanitized_name}.log"
+        log_file = os.path.join(log_dir, log_filename)
 
         # Create a custom logger
-        logger = logging.getLogger()
-        logger.setLevel(logging.DEBUG)  # Set to DEBUG to capture all levels
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.DEBUG)  # Capture all levels
 
         # Define log format
         formatter = logging.Formatter(
@@ -57,7 +62,7 @@ class Logger:
         file_handler = RotatingFileHandler(
             log_file,
             mode='a',
-            maxBytes=5*1024*1024,  # 5 MB
+            maxBytes=5 * 1024 * 1024,  # 5 MB
             backupCount=5,
             encoding='utf-8',
             delay=0
@@ -70,4 +75,7 @@ class Logger:
             logger.addHandler(console_handler)
             logger.addHandler(file_handler)
 
-        Logger._logger_instance = logger
+        # Store the logger in the dictionary
+        Logger._loggers[name] = logger
+
+        return logger

@@ -3,14 +3,22 @@
 import os
 import pandas as pd
 from typing import Dict, List
+from tqdm import tqdm
+
 from src.config.config import Config
 from src.utils.logger import Logger
 
 
 class DataLoader:
     def __init__(self, config: Config):
+        """
+        Initializes the DataLoader with the provided configuration.
+
+        Args:
+            config (Config): Configuration object containing dataset paths and settings.
+        """
         self.config = config
-        self.logger = Logger.get_logger()
+        self.logger = Logger.get_logger(__name__)
 
     def load_dataset(self, dataset_type: str) -> pd.DataFrame:
         """
@@ -20,12 +28,16 @@ class DataLoader:
             dataset_type (str): Type of dataset to load (e.g., 'train', 'validation', 'test_noise').
 
         Returns:
-            pd.DataFrame: Loaded dataset.
+            pd.DataFrame: Loaded and concatenated dataset.
         """
         try:
             # Dynamically get the directory path from config based on dataset_type
             path_attr = f"data_{dataset_type}_dir"
-            dataset_path = getattr(self.config.paths, path_attr)
+            dataset_path = getattr(self.config.paths, path_attr, None)
+
+            if dataset_path is None:
+                self.logger.error(f"Dataset type '{dataset_type}' is not defined in the configuration.")
+                raise AttributeError(f"Dataset type '{dataset_type}' is not defined in the configuration.")
 
             if not os.path.exists(dataset_path):
                 self.logger.error(f"Directory {dataset_path} does not exist.")
@@ -38,7 +50,7 @@ class DataLoader:
                 return pd.DataFrame()  # Return empty DataFrame if no files are found
 
             df_list = []
-            for file in all_files:
+            for file in tqdm(all_files, desc=f"Loading {dataset_type} data"):
                 file_path = os.path.join(dataset_path, file)
                 try:
                     df = pd.read_csv(file_path)  # Modify if supporting other formats
@@ -50,7 +62,8 @@ class DataLoader:
             if df_list:
                 combined_df = pd.concat(df_list, ignore_index=True)
                 self.logger.info(
-                    f"Combined {len(df_list)} files into a single DataFrame with {len(combined_df)} records for '{dataset_type}' dataset.")
+                    f"Combined {len(df_list)} files into a single DataFrame with {len(combined_df)} records for '{dataset_type}' dataset."
+                )
                 return combined_df
             else:
                 self.logger.warning(f"No valid data loaded for dataset type '{dataset_type}'.")

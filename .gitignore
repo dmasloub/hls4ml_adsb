@@ -1,8 +1,6 @@
 .venv
 .idea
 data.zip
-data
-models
 hls_model
 __pycache__
 hls_model_1
