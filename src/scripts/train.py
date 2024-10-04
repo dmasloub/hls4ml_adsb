@@ -3,6 +3,8 @@
 import os
 import pickle
 import tensorflow as tf
+import tensorflow_model_optimization as tfmot
+from tensorflow_model_optimization.python.core.sparsity.keras import prune, pruning_schedule, pruning_callbacks
 from src.utils.common_utils import CommonUtils
 from src.utils.logger import Logger
 from src.config.config import Config
@@ -12,13 +14,12 @@ from src.data.data_preparation import DataPreparer
 from src.utils.visualization import Visualizer
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
 
-
 def main():
     # Initialize configuration and logger
     config = Config()
-    logger = Logger.get_logger(__name__)  # Automatically assigns 'src_scripts_train.log'
+    logger = Logger.get_logger(__name__)
 
-    logger.info("Starting training process.")
+    logger.info("Starting training process with pruning.")
 
     try:
         # Set random seeds for reproducibility
@@ -27,7 +28,7 @@ def main():
         # Define the path for preprocessed data
         preprocessed_data_path = config.paths.preprocessed_data_path
 
-        # Check if preprocessed data already exists
+        # Load or preprocess data
         if os.path.exists(preprocessed_data_path):
             logger.info(f"Preprocessed data found at '{preprocessed_data_path}'. Loading data.")
             with open(preprocessed_data_path, 'rb') as f:
@@ -35,12 +36,10 @@ def main():
             logger.info("Preprocessed data loaded successfully.")
         else:
             logger.info("Preprocessed data not found. Proceeding with data loading and preprocessing.")
-            # Load raw datasets
             data_loader = DataLoader(config)
             raw_datasets = data_loader.get_all_datasets()
             logger.info("Raw datasets loaded successfully.")
 
-            # Initialize DataPreparer and preprocess datasets
             data_preparer = DataPreparer(config)
             preprocessed_datasets = data_preparer.prepare_datasets(raw_datasets, save_path=preprocessed_data_path)
             logger.info("Data preprocessing completed and saved.")
@@ -54,15 +53,35 @@ def main():
 
         X_train = df_train['X_scaled']
         y_train = df_train['y']
-        logger.info(f"Shape of training data: {X_train.shape}")  # Should be (num_samples, num_features)
+        logger.info(f"Shape of training data: {X_train.shape}")
 
         # Initialize the autoencoder model
         autoencoder = QuantizedAutoencoder(config.model, X_train.shape[1])
         logger.info("Autoencoder model initialized.")
 
+        # Apply pruning
+        pruning_params = {
+            'pruning_schedule': pruning_schedule.ConstantSparsity(
+                target_sparsity=config.model.pruning_percent,
+                begin_step=config.model.begin_step,
+                frequency=config.model.frequency
+            )
+        }
+        pruned_model = prune.prune_low_magnitude(autoencoder.model, **pruning_params)
+        logger.info("Pruning applied to the model.")
+
+        # Compile the pruned model
+        pruned_model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=config.model.learning_rate),
+            loss='mean_squared_error',
+            metrics=['mse', 'mae']
+        )
+        logger.info("Pruned model compiled.")
+
         # Define callbacks
         callbacks = [
             EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+            pruning_callbacks.UpdatePruningStep(),
             ModelCheckpoint(
                 filepath=os.path.join(config.paths.checkpoints_dir, 'best_model.h5'),
                 monitor='val_loss',
@@ -77,7 +96,6 @@ def main():
         CommonUtils.create_directory(config.paths.model_dir)
 
         # Prepare TensorFlow datasets
-        # For autoencoders, inputs and outputs are the same
         train_dataset = tf.data.Dataset.from_tensor_slices((X_train, X_train))
         train_dataset = train_dataset.batch(config.model.batch_size).prefetch(tf.data.AUTOTUNE)
         logger.info("Training TensorFlow dataset prepared.")
@@ -86,7 +104,7 @@ def main():
         if df_validation is not None and df_validation['X_scaled'].size > 0:
             X_val = df_validation['X_scaled']
             y_val = df_validation['y']
-            logger.info(f"Shape of validation data: {X_val.shape}")  # Should be (num_samples, num_features)
+            logger.info(f"Shape of validation data: {X_val.shape}")
 
             validation_dataset = tf.data.Dataset.from_tensor_slices((X_val, X_val))
             validation_dataset = validation_dataset.batch(config.model.batch_size).prefetch(tf.data.AUTOTUNE)
@@ -94,13 +112,17 @@ def main():
         else:
             logger.warning("Validation dataset is empty or not provided. Proceeding without validation.")
 
-        # Train the autoencoder
-        history = autoencoder.train(
-            train_data=train_dataset,
+        # Train the pruned autoencoder
+        history = pruned_model.fit(
+            train_dataset,
+            epochs=config.model.epochs,
             validation_data=validation_dataset,
             callbacks=callbacks
         )
-        logger.info("Model training completed.")
+        logger.info("Pruned model training completed.")
+
+        # Strip pruning wrappers
+        stripped_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
 
         # Plot training history
         visualizer = Visualizer(config)
@@ -108,17 +130,16 @@ def main():
         visualizer.plot_training_history(history, save_path=plot_path)
         logger.info(f"Training history plot saved to {plot_path}.")
 
-        # Save the trained model
+        # Save the stripped model
         model_save_path = os.path.join(config.paths.model_dir, 'autoencoder.h5')
-        autoencoder.save_model(model_save_path)
-        logger.info(f"Trained model saved to {model_save_path}.")
+        stripped_model.save(model_save_path)
+        logger.info(f"Trained pruned model saved to {model_save_path}.")
 
     except Exception as e:
         logger.error(f"An error occurred during training: {e}", exc_info=True)
         raise
 
     logger.info("Training process completed successfully.")
-
 
 if __name__ == "__main__":
     main()
