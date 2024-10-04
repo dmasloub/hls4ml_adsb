@@ -40,6 +40,9 @@ class ModelConfig:
     epochs: int = 50
     validation_split: float = 0.2      # Optional: If using separate validation data, can be omitted
     standard_q_threshold: float = 0.00001
+    pruning_percent: float = 0.75
+    begin_step: int = 1000
+    frequency: int = 200
 
 
 @dataclass
