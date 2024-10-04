@@ -33,7 +33,7 @@ class BayesianOptimizer:
         self.visualizer = Visualizer(config)
         self.optimizer_results = []  # To store optimization results
         self.checkpoint_path = os.path.join(config.paths.checkpoints_dir, "optimization_checkpoint.pkl")
-        self.best_score = float('inf')
+        self.best_score = self.config.optimization.penalty_score
         self.best_hyperparameters = None
 
         # Define the search space based on the configuration
