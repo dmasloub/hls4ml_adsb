@@ -121,17 +121,6 @@ class QuantizedAutoencoder:
             epochs = self.config.epochs
             self.logger.info("Starting training of the Quantized Autoencoder model.")
 
-            # Removed redundant mapping
-            # train_data = train_data.map(lambda x: (x, x))
-            # self.logger.debug("Mapped training data to (x, x).")
-
-            if validation_data is not None:
-                # Similarly map validation_data to (x, x) if not already done
-                # Removed redundant mapping
-                # validation_data = validation_data.map(lambda x: (x, x))
-                # self.logger.debug("Mapped validation data to (x, x).")
-                pass  # No action needed
-
             history = self.model.fit(
                 train_data,
                 epochs=epochs,
