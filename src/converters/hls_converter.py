@@ -3,14 +3,13 @@
 import os
 import pickle
 import hls4ml
-import yaml
+import logging
 from tensorflow.keras.models import load_model
 from qkeras import QDense, quantized_bits  # Import required components from QKeras
 from keras.utils import custom_object_scope
 from src.utils.logger import Logger
-from src.config.config import get_config
-from src.utils.hls_utils import extract_utilization
-from src.utils.visualization import print_dict
+from src.config.config import Config
+from src.utils.hls_utils import HLSUtils
 
 
 class HLSConverter:
@@ -26,9 +25,9 @@ class HLSConverter:
         Args:
             build_model (bool, optional): If True, compiles and builds the HLS model.
         """
-        self.config = get_config()
-        self.logger = Logger.get_logger(__name__, log_level=logging.INFO,
-                                        log_file=os.path.join(self.config.paths.logs_dir, 'hls_conversion.log'))
+        self.config = Config()
+        self.logger = Logger.get_logger(__name__, log_filename='hls_conversion.log')
+        self.logger.setLevel(logging.INFO)
         self.build_model = build_model
         self.model = None
         self.hls_model = None
@@ -44,7 +43,7 @@ class HLSConverter:
         Args:
             model_filename (str, optional): Filename of the trained model. Defaults to 'autoencoder.h5'.
         """
-        model_path = os.path.join(self.config.paths.model_standard_dir, model_filename)
+        model_path = os.path.join(self.config.paths.model_dir, model_filename)
         self.logger.info(f"Loading trained model from {model_path}.")
         if not os.path.exists(model_path):
             self.logger.error(f"Model file not found at {model_path}.")
@@ -57,14 +56,14 @@ class HLSConverter:
 
         self.logger.info("Model loaded successfully.")
 
-    def load_pipeline(self, pipeline_filename='pipeline.pkl'):
+    def load_pipeline(self, pipeline_filename='scaling_pipeline.pkl'):
         """
         Loads the preprocessing pipeline if it exists.
 
         Args:
-            pipeline_filename (str, optional): Filename of the preprocessing pipeline. Defaults to 'pipeline.pkl'.
+            pipeline_filename (str, optional): Filename of the preprocessing pipeline. Defaults to 'scaling_pipeline.pkl'.
         """
-        pipeline_path = os.path.join(self.config.paths.model_standard_dir, pipeline_filename)
+        pipeline_path = os.path.join(self.config.paths.model_dir, pipeline_filename)
         self.logger.info(f"Loading preprocessing pipeline from {pipeline_path}.")
         if not os.path.exists(pipeline_path):
             self.logger.warning(f"Pipeline file not found at {pipeline_path}. Proceeding without pipeline.")
@@ -81,8 +80,7 @@ class HLSConverter:
         self.logger.info("Creating HLS configuration from the Keras model.")
         self.hls_config = hls4ml.utils.config_from_keras_model(
             self.model,
-            granularity='model',
-            default_precision='ap_fixed<16,6>'  # Example precision; adjust as needed
+            granularity='models',
         )
         self.logger.info("HLS configuration created successfully.")
         self.logger.debug(f"HLS Configuration:\n{self.hls_config}")
@@ -101,10 +99,7 @@ class HLSConverter:
             hls_config=self.hls_config,
             output_dir=self.output_dir,
             backend=backend,
-            part='xc7z020clg400-1',  # Example FPGA part; adjust based on your board
-            clock_period=5,  # Example clock period in ns; adjust as needed
-            io_type='io_parallel',
-            cascade=True
+            board=target,
         )
         self.logger.info("HLS model conversion completed successfully.")
 
@@ -122,7 +117,7 @@ class HLSConverter:
 
         if self.build_model:
             self.logger.info("Building the HLS model.")
-            self.hls_model.build(csim=False, export=True, synth=True, timing=True)
+            self.hls_model.build(csim=False, export=True, bitfile=True)
             self.logger.info("HLS model built successfully.")
 
     def plot_model(self):
@@ -154,19 +149,20 @@ class HLSConverter:
             self.logger.error(f"Synthesis report not found at {report_path}. Ensure that the HLS model has been built.")
             raise FileNotFoundError(f"Synthesis report not found at {report_path}.")
 
-        utilization = extract_utilization(report_path)
+        hls_utils = HLSUtils()
+        utilization = hls_utils.extract_utilization(report_path)
         self.logger.info("Resource utilization extracted successfully.")
         self.logger.debug(f"Resource Utilization: {utilization}")
         return utilization
 
-    def convert(self, model_filename='autoencoder.h5', pipeline_filename='pipeline.pkl', target='pynq-z2',
+    def convert(self, model_filename='autoencoder.h5', pipeline_filename='scaling_pipeline.pkl', target='pynq-z2',
                 backend='VivadoAccelerator'):
         """
         Executes the full conversion process from Keras model to HLS.
 
         Args:
             model_filename (str, optional): Filename of the trained Keras model. Defaults to 'autoencoder.h5'.
-            pipeline_filename (str, optional): Filename of the preprocessing pipeline. Defaults to 'pipeline.pkl'.
+            pipeline_filename (str, optional): Filename of the preprocessing pipeline. Defaults to 'scaling_pipeline.pkl'.
             target (str, optional): Target FPGA board. Defaults to 'pynq-z2'.
             backend (str, optional): Backend synthesis tool. Defaults to 'VivadoAccelerator'.
 

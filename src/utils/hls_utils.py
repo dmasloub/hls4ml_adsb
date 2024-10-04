@@ -128,7 +128,7 @@ class HLSUtils:
             logger.warning("Insufficient table data to extract headers and rows.")
             return None
 
-    def extract_utilization(self, report_path: str) -> Dict[str, int]:
+    def extract_utilization(self, report_path: str) -> Dict[str, Dict[str, int]]:
         """
         Extracts FPGA resource utilization metrics from the HLS synthesis report.
 
@@ -136,45 +136,106 @@ class HLSUtils:
             report_path (str): Path to the HLS synthesis report.
 
         Returns:
-            Dict[str, int]: Dictionary containing resource utilization metrics.
+            Dict[str, Dict[str, int]]: Dictionary containing resource utilization metrics.
         """
+        try:
+            content = self._read_report(report_path)
+        except Exception as e:
+            self.logger.error(f"Error reading report: {e}", exc_info=True)
+            return {}
+
+        lines = content.split('\n')
         utilization = {}
-        content = self._read_report(report_path)
 
-        # Define patterns to search for utilization metrics
-        patterns = {
-            'Total_LUT': r'Total LUTs\s+(\d+)',
-            'Used_LUT': r'Used LUTs\s+(\d+)',
-            'Available_LUT': r'Available LUTs\s+(\d+)',
-            'LUT_Utilization': r'LUT Utilization\s+(\d+)%',
+        # Locate '== Utilization Estimates' section
+        util_section_start = None
+        for idx, line in enumerate(lines):
+            if '== Utilization Estimates' in line:
+                util_section_start = idx
+                break
 
-            'Total_FF': r'Total Flip-Flops\s+(\d+)',
-            'Used_FF': r'Used Flip-Flops\s+(\d+)',
-            'Available_FF': r'Available Flip-Flops\s+(\d+)',
-            'FF_Utilization': r'Flip-Flop Utilization\s+(\d+)%',
+        if util_section_start is None:
+            self.logger.error("Utilization Estimates section not found in the report.")
+            return {}
 
-            'Total_DSP48E': r'Total DSP48E Blocks\s+(\d+)',
-            'Used_DSP48E': r'Used DSP48E Blocks\s+(\d+)',
-            'Available_DSP48E': r'Available DSP48E Blocks\s+(\d+)',
-            'DSP48E_Utilization': r'DSP48E Utilization\s+(\d+)%',
+        # Locate '* Summary:'
+        summary_start = None
+        for idx in range(util_section_start, len(lines)):
+            if '* Summary:' in lines[idx]:
+                summary_start = idx
+                break
 
-            'Total_BRAM': r'Total Block RAM\s+(\d+)',
-            'Used_BRAM': r'Used Block RAM\s+(\d+)',
-            'Available_BRAM': r'Available Block RAM\s+(\d+)',
-            'BRAM_Utilization': r'Block RAM Utilization\s+(\d+)%',
+        if summary_start is None:
+            self.logger.error("Summary section not found under Utilization Estimates.")
+            return {}
 
-            # Add more patterns as needed for other resources
-        }
+        # Locate the table starting from summary_start
+        table_start = None
+        for idx in range(summary_start, len(lines)):
+            if lines[idx].startswith('+'):
+                table_start = idx
+                break
 
-        for key, pattern in patterns.items():
-            value = self._extract_metric(pattern, content, key, is_percentage=key.endswith('Utilization'))
-            if value is not None:
-                utilization[key] = value
-                self.logger.debug(f"Extracted {key}: {value}")
+        if table_start is None:
+            self.logger.error("Could not find the start of the summary table.")
+            return {}
+
+        # Collect the table lines
+        table_lines = []
+        idx = table_start
+        while idx < len(lines):
+            line = lines[idx]
+            if line.startswith('+'):
+                table_lines.append(line)
+                idx += 1
+            elif line.startswith('|'):
+                table_lines.append(line)
+                idx += 1
             else:
-                self.logger.warning(f"Pattern for {key} not found or failed to extract.")
+                # Reached the end of the table
+                break
 
-        return utilization
+        if not table_lines:
+            self.logger.error("No table data found in the summary section.")
+            return {}
+
+        # Remove separator lines (those that start with '+')
+        data_lines = [line for line in table_lines if line.startswith('|')]
+
+        # Now process the data lines
+        parsed_rows = []
+        for line in data_lines:
+            # Split the line by '|' and strip spaces
+            columns = [col.strip() for col in line.strip().split('|')]
+            # Ignore empty columns resulting from split
+            columns = [col for col in columns if col]
+            if columns:
+                parsed_rows.append(columns)
+
+        # Now create DataFrame
+        try:
+            df = pd.DataFrame(parsed_rows[1:], columns=parsed_rows[0])  # First row is header
+            # Now extract the required rows
+            total_row = df[df['Name'] == 'Total'].iloc[0]
+            available_row = df[df['Name'] == 'Available'].iloc[0]
+            utilization_row = df[df['Name'] == 'Utilization (%)'].iloc[0]
+            # Create a dictionary of resource utilization
+            resources = ['BRAM_18K', 'DSP48E', 'FF', 'LUT', 'URAM']
+            utilization = {}
+            for res in resources:
+                total = int(total_row[res].replace(',', '').replace('-', '0'))
+                available = int(available_row[res].replace(',', '').replace('-', '0'))
+                utilization_pct = float(utilization_row[res].replace(',', '').replace('-', '0'))
+                utilization[res] = {
+                    'Total': total,
+                    'Available': available,
+                    'Utilization (%)': utilization_pct
+                }
+            self.logger.info(f"Utilization: {utilization}")
+            return utilization
+        except Exception as e:
+            self.logger.error(f"Failed to parse utilization table: {e}", exc_info=True)
+            return {}
 
     def extract_utilization_table(self, report_path: str, table_header: str) -> Optional[pd.DataFrame]:
         """

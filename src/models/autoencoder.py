@@ -1,6 +1,8 @@
 # src/models/autoencoder.py
 
-from typing import Optional, List
+from typing import Optional, List, Union
+
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input
@@ -177,7 +179,7 @@ class QuantizedAutoencoder:
             self.logger.error(f"Error loading the model: {e}")
             raise
 
-    def predict(self, data: tf.data.Dataset) -> tf.Tensor:
+    def predict(self, data: Union[np.ndarray, tf.data.Dataset]) -> np.ndarray:
         """
         Generates predictions using the trained autoencoder model.
 

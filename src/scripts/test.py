@@ -69,7 +69,7 @@ def main():
 
             # Perform evaluation (assuming Evaluator handles the logic)
             evaluator = Evaluator(config)
-            metrics = evaluator.evaluate_model(autoencoder, test_dataset, y_test)
+            metrics = evaluator.evaluate_model(autoencoder, X_test, y_test)
             results[test_set] = metrics
             logger.info(f"Metrics for {test_set}: {metrics}")
 

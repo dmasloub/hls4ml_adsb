@@ -3,19 +3,21 @@
 import os
 import pickle
 from typing import Dict, Any, List
+import tensorflow as tf
 from src.config.config import Config
 from src.utils.logger import Logger
 from src.utils.common_utils import CommonUtils
-from src.models import QuantizedAutoencoder
+from src.models.autoencoder import QuantizedAutoencoder
 from src.data.data_loader import DataLoader
 from src.data.data_preparation import DataPreparer
-from src.evaluation import Evaluator
-from src.converters import HLSConverter
+from src.evaluation.evaluator import Evaluator
+from src.converters.hls_converter import HLSConverter
 from src.utils.visualization import Visualizer
 from sklearn.exceptions import NotFittedError
 from skopt import gp_minimize
 from skopt.space import Real, Integer, Categorical
 from skopt.utils import use_named_args
+from tensorflow.keras.callbacks import EarlyStopping
 
 
 class BayesianOptimizer:
@@ -86,20 +88,6 @@ class BayesianOptimizer:
 
     def _objective(self, bits: int, integer_bits: int, alpha: float, pruning_percent: float, begin_step: int,
                    frequency: int) -> float:
-        """
-        Objective function to minimize. Combines model accuracy and resource usage.
-
-        Args:
-            bits (int): Number of bits for quantization.
-            integer_bits (int): Number of integer bits for quantization.
-            alpha (float): Scaling factor for quantization.
-            pruning_percent (float): Pruning percentage for the model.
-            begin_step (int): Step at which pruning begins.
-            frequency (int): Frequency of pruning.
-
-        Returns:
-            float: Objective score to minimize.
-        """
         try:
             self.logger.info(
                 f"Evaluating hyperparameters: bits={bits}, integer_bits={integer_bits}, alpha={alpha}, pruning_percent={pruning_percent}, begin_step={begin_step}, frequency={frequency}")
@@ -109,28 +97,40 @@ class BayesianOptimizer:
             self.config.model.integer_bits = integer_bits
             self.config.model.alpha = alpha
 
-            # Initialize components
-            data_loader = DataLoader(self.config)
-            raw_datasets = data_loader.get_all_datasets()
+            # Load preprocessed data
+            preprocessed_data_path = self.config.paths.preprocessed_data_path
+            if os.path.exists(preprocessed_data_path):
+                self.logger.info(f"Preprocessed data found at '{preprocessed_data_path}'. Loading data.")
+                with open(preprocessed_data_path, 'rb') as f:
+                    preprocessed_datasets = pickle.load(f)
+                self.logger.info("Preprocessed data loaded successfully.")
+            else:
+                self.logger.info("Preprocessed data not found. Proceeding with data loading and preprocessing.")
+                data_loader = DataLoader(self.config)
+                raw_datasets = data_loader.get_all_datasets()
+                data_preparer = DataPreparer(self.config)
+                preprocessed_datasets = data_preparer.prepare_datasets(raw_datasets, save_path=preprocessed_data_path)
+                self.logger.info("Data preprocessing completed and saved.")
 
-            data_preparer = DataPreparer(self.config)
-            preprocessed_datasets = data_preparer.prepare_datasets(raw_datasets)
+            # Access preprocessed data
+            train_data = preprocessed_datasets['train']['X_scaled']
+            validation_data = preprocessed_datasets['validation']['X_scaled']
+
+            # Get input dimension
+            input_dim = train_data.shape[1]
 
             # Initialize and train the model
-            autoencoder = QuantizedAutoencoder(self.config.model)
-            train_data = preprocessed_datasets['train']
-            validation_data = preprocessed_datasets['validation']
+            autoencoder = QuantizedAutoencoder(self.config.model, input_dim)
+            self.logger.info("Autoencoder model initialized.")
 
-            # Convert Pandas DataFrames to TensorFlow Datasets
-            train_dataset = tf.data.Dataset.from_tensor_slices((train_data.values, train_data.values))
-            train_dataset = train_dataset.batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
+            # Prepare datasets
+            train_dataset = tf.data.Dataset.from_tensor_slices((train_data, train_data)).batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
+            validation_dataset = tf.data.Dataset.from_tensor_slices((validation_data, validation_data)).batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
 
-            validation_dataset = tf.data.Dataset.from_tensor_slices((validation_data.values, validation_data.values))
-            validation_dataset = validation_dataset.batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
+            # Define callbacks
+            callbacks = [EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)]
 
-            # Define callbacks (e.g., pruning callbacks if applicable)
-            callbacks = []  # Add any pruning callbacks based on begin_step and frequency if needed
-
+            # Train the model
             history = autoencoder.train(
                 train_data=train_dataset,
                 validation_data=validation_dataset,
@@ -139,28 +139,55 @@ class BayesianOptimizer:
 
             # Evaluate the model
             evaluator = Evaluator(self.config)
-            evaluation_metrics = evaluator.evaluate(autoencoder, preprocessed_datasets['test_noise'])
+            test_data = preprocessed_datasets['test_manoeuver']
+            X_test = test_data['X_scaled']
+            y_test = test_data['y']
 
-            # Extract accuracy (assuming 'accuracy' is part of evaluation_metrics)
+            evaluation_metrics = evaluator.evaluate_model(autoencoder, X_test, y_test)
+
+            # Extract accuracy
             accuracy = evaluation_metrics.get('accuracy', 0)
             self.logger.info(f"Model accuracy: {accuracy}")
 
-            # Convert the model to HLS and extract resource usage
-            hls_converter = HLSConverter(self.config)
-            hls_output_path = os.path.join(self.config.paths.hls_output_dir,
-                                           f"model_bits_{bits}_int_{integer_bits}.cpp")
-            hls_converter.convert(autoencoder, save_path=hls_output_path)
+            # Ensure directories exist
+            CommonUtils.create_directory(self.config.paths.model_dir)
+            CommonUtils.create_directory(self.config.paths.hls_output_dir)
 
-            # Extract resource usage metrics
-            resource_metrics = hls_converter.get_resource_utilization()
-            resource_usage = resource_metrics.get('LUTs', 0)  # Example metric
+            # Save the trained model
+            temp_model_path = os.path.join(self.config.paths.model_dir, 'temp_autoencoder.h5')
+            autoencoder.save_model(temp_model_path)
 
-            self.logger.info(f"Resource usage (LUTs): {resource_usage}")
+            # Convert to HLS and extract resource usage
+            hls_converter = HLSConverter(build_model=True)
+            utilization = hls_converter.convert(model_filename='temp_autoencoder.h5', pipeline_filename='scaling_pipeline.pkl')
 
-            # Combine accuracy and resource usage into a single objective score
-            # Objective: Minimize (1 - accuracy) * alpha + resource_usage * lambda_reg
+            # Extract resource utilization percentages
+            lut_utilization_pct = utilization.get('LUT', {}).get('Utilization (%)', 0)
+            dsp_utilization_pct = utilization.get('DSP48E', {}).get('Utilization (%)', 0)
+            ff_utilization_pct = utilization.get('FF', {}).get('Utilization (%)', 0)
+
+            # Log resource utilizations
+            self.logger.info("Resource utilization percentages:")
+            self.logger.info(f"  LUT Utilization (%): {lut_utilization_pct}")
+            self.logger.info(f"  DSP48E Utilization (%): {dsp_utilization_pct}")
+            self.logger.info(f"  FF Utilization (%): {ff_utilization_pct}")
+
+            # Check if any utilization is outside [1%, 99%]
+            if not (1 <= lut_utilization_pct <= 99) or not (1 <= dsp_utilization_pct <= 99) or not (1 <= ff_utilization_pct <= 99):
+                self.logger.warning("Resource utilization out of bounds (1% - 99%). Assigning worst possible score.")
+                return self.config.optimization.penalty_score
+
+            # Normalize the utilization percentages to [0, 1]
+            lut_normalized = lut_utilization_pct / 100.0
+            dsp_normalized = dsp_utilization_pct / 100.0
+            ff_normalized = ff_utilization_pct / 100.0
+
+            # Compute the average normalized resource usage
+            average_normalized_resource_usage = (lut_normalized + dsp_normalized + ff_normalized) / 3.0
+
+            # Compute the objective score
             lambda_reg = self.config.optimization.lambda_reg
-            objective_score = (1 - accuracy) + lambda_reg * resource_usage
+            objective_score = (1 - accuracy) + lambda_reg * average_normalized_resource_usage
 
             self.logger.info(f"Objective score: {objective_score}")
 
@@ -173,7 +200,10 @@ class BayesianOptimizer:
                 'begin_step': begin_step,
                 'frequency': frequency,
                 'accuracy': accuracy,
-                'resource_usage': resource_usage,
+                'lut_utilization_pct': lut_utilization_pct,
+                'dsp_utilization_pct': dsp_utilization_pct,
+                'ff_utilization_pct': ff_utilization_pct,
+                'average_normalized_resource_usage': average_normalized_resource_usage,
                 'score': objective_score
             })
 
@@ -190,15 +220,19 @@ class BayesianOptimizer:
                 }
                 self.logger.info(f"New best score: {self.best_score} with hyperparameters: {self.best_hyperparameters}")
 
-            # Save checkpoint after each evaluation
+            # Save checkpoint
             self._save_checkpoint()
+
+            # Clean up temporary files
+            if os.path.exists(temp_model_path):
+                os.remove(temp_model_path)
+                self.logger.debug(f"Temporary model file {temp_model_path} removed.")
 
             return objective_score
 
         except Exception as e:
-            self.logger.error(f"Error in objective function: {e}")
-            # Assign a high penalty score to discourage the optimizer from this region
-            return float('inf')
+            self.logger.error(f"Error in objective function: {e}", exc_info=True)
+            return self.config.optimization.penalty_score
 
     def optimize(self):
         """
@@ -253,12 +287,12 @@ class BayesianOptimizer:
             # Plot resource utilization if needed
             resource_metrics = {}
             for result in self.optimizer_results:
-                resource_metrics.setdefault('LUTs', []).append(result['resource_usage'])
+                resource_metrics.setdefault('Total_LUT', []).append(result['resource_usage'])
             resource_utilization_path = os.path.join(self.config.paths.logs_dir, "resource_utilization.png")
             self.visualizer.plot_resource_utilization(resource_metrics, resource_utilization_path)
 
         except Exception as e:
-            self.logger.error(f"Error during Bayesian Optimization: {e}")
+            self.logger.error(f"Error during Bayesian Optimization: {e}", exc_info=True)
             raise
 
     def _on_step(self, result):
