@@ -185,6 +185,17 @@ class BayesianOptimizer:
             accuracy = evaluation_metrics.get('accuracy', 0)
             self.logger.info(f"Model accuracy: {accuracy}")
 
+            # Extract precision
+            precision = evaluation_metrics.get('precision', 0)
+            self.logger.info(f"Model precision: {precision}")
+
+            # Extract recall
+            recall = evaluation_metrics.get('recall', 0)
+            self.logger.info(f"Model recall: {recall}")
+
+            # Compute the average metrics
+            average_metrics = (accuracy + precision + recall) / 3.0
+
             # Ensure directories exist
             CommonUtils.create_directory(self.config.paths.model_dir)
             CommonUtils.create_directory(self.config.paths.hls_output_dir)
@@ -223,7 +234,7 @@ class BayesianOptimizer:
 
             # Compute the objective score
             lambda_reg = self.config.optimization.lambda_reg
-            objective_score = (1 - accuracy) + lambda_reg * average_normalized_resource_usage
+            objective_score = (1 - average_metrics) + lambda_reg * average_normalized_resource_usage
 
             self.logger.info(f"Objective score: {objective_score}")
 
