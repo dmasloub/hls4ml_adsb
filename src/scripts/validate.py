@@ -11,7 +11,7 @@ from src.config.config import Config
 from src.models.autoencoder import QuantizedAutoencoder
 from src.data.data_loader import DataLoader
 from src.data.data_preparation import DataPreparer
-from src.evaluation.evaluator import Evaluator  # Ensure this points to the updated Evaluator class
+from src.evaluation.evaluator import Evaluator
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
 
 

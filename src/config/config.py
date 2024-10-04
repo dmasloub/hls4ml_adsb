@@ -22,7 +22,7 @@ class DataConfig:
     features: List[str] = field(default_factory=lambda: ["longitude", "latitude", "altitude", "groundspeed", "x", "y"])
     window_size: int = 60
     diff_data: bool = True
-    diff_features: List[str] = field(default_factory=lambda: ["longitude", "latitude"])
+    diff_features: List[str] = field(default_factory=lambda: ["longitude", "latitude", "x", "y"])
     k_lag: int = 1
     k_order: int = 1
     std_threshold_train: float = 5.0
@@ -32,12 +32,12 @@ class DataConfig:
 class ModelConfig:
     # input_dim: int = 6                # Updated to match the number of features
     encoding_dim: int = 10
-    bits: int = 6                      # Changed to 6 to match provided code
+    bits: int = 8                      # Changed to 6 to match provided code
     integer_bits: int = 0
     alpha: float = 1.0
     learning_rate: float = 0.001
-    batch_size: int = 32
-    epochs: int = 10
+    batch_size: int = 128
+    epochs: int = 50
     validation_split: float = 0.2      # Optional: If using separate validation data, can be omitted
 
 @dataclass
