@@ -4,6 +4,7 @@ import os
 import pickle
 from typing import Dict, Any, List
 import tensorflow as tf
+import tensorflow_model_optimization as tfmot
 from src.config.config import Config
 from src.utils.logger import Logger
 from src.utils.common_utils import CommonUtils
@@ -17,8 +18,8 @@ from sklearn.exceptions import NotFittedError
 from skopt import gp_minimize
 from skopt.space import Real, Integer, Categorical
 from skopt.utils import use_named_args
-from tensorflow.keras.callbacks import EarlyStopping
-
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
+from tensorflow_model_optimization.python.core.sparsity.keras import prune, pruning_schedule, pruning_callbacks
 
 class BayesianOptimizer:
     def __init__(self, config: Config):
@@ -96,6 +97,9 @@ class BayesianOptimizer:
             self.config.model.bits = bits
             self.config.model.integer_bits = integer_bits
             self.config.model.alpha = alpha
+            self.config.model.pruning_percent = pruning_percent
+            self.config.model.begin_step = begin_step
+            self.config.model.frequency = frequency
 
             # Load preprocessed data
             preprocessed_data_path = self.config.paths.preprocessed_data_path
@@ -119,23 +123,55 @@ class BayesianOptimizer:
             # Get input dimension
             input_dim = train_data.shape[1]
 
-            # Initialize and train the model
+            # Initialize the autoencoder model
             autoencoder = QuantizedAutoencoder(self.config.model, input_dim)
             self.logger.info("Autoencoder model initialized.")
 
-            # Prepare datasets
-            train_dataset = tf.data.Dataset.from_tensor_slices((train_data, train_data)).batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
-            validation_dataset = tf.data.Dataset.from_tensor_slices((validation_data, validation_data)).batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
+            # Apply pruning to the model
+            pruning_params = {
+                'pruning_schedule': pruning_schedule.ConstantSparsity(
+                    target_sparsity=pruning_percent,
+                    begin_step=begin_step,
+                    frequency=frequency
+                )
+            }
+            pruned_model = prune.prune_low_magnitude(autoencoder.model, **pruning_params)
+            self.logger.info("Pruning applied to the model.")
 
-            # Define callbacks
-            callbacks = [EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)]
+            # Compile the pruned model
+            pruned_model.compile(
+                optimizer=tf.keras.optimizers.Adam(learning_rate=self.config.model.learning_rate),
+                loss='mean_squared_error',
+                metrics=['mse', 'mae']
+            )
+            self.logger.info("Pruned model compiled.")
 
-            # Train the model
-            history = autoencoder.train(
-                train_data=train_dataset,
+            # Define pruning callbacks
+            callbacks = [
+                pruning_callbacks.UpdatePruningStep(),
+                EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+            ]
+
+            # Prepare TensorFlow datasets
+            train_dataset = tf.data.Dataset.from_tensor_slices((train_data, train_data))
+            train_dataset = train_dataset.batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
+            self.logger.info("Training TensorFlow dataset prepared.")
+
+            validation_dataset = tf.data.Dataset.from_tensor_slices((validation_data, validation_data))
+            validation_dataset = validation_dataset.batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
+            self.logger.info("Validation TensorFlow dataset prepared.")
+
+            # Train the pruned model
+            history = pruned_model.fit(
+                train_dataset,
+                epochs=self.config.model.epochs,
                 validation_data=validation_dataset,
                 callbacks=callbacks
             )
+            self.logger.info("Pruned model training completed.")
+
+            # Strip pruning wrappers
+            stripped_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
 
             # Evaluate the model
             evaluator = Evaluator(self.config)
@@ -155,7 +191,7 @@ class BayesianOptimizer:
 
             # Save the trained model
             temp_model_path = os.path.join(self.config.paths.model_dir, 'temp_autoencoder.h5')
-            autoencoder.save_model(temp_model_path)
+            stripped_model.save(temp_model_path)
 
             # Convert to HLS and extract resource usage
             hls_converter = HLSConverter(build_model=True)
@@ -285,9 +321,12 @@ class BayesianOptimizer:
             self.visualizer.plot_optimization_progress(self.optimizer_results, optimization_progress_path)
 
             # Plot resource utilization if needed
-            resource_metrics = {}
-            for result in self.optimizer_results:
-                resource_metrics.setdefault('Total_LUT', []).append(result['resource_usage'])
+            # Assuming 'resource_usage' is a key in optimizer_results; adjust as necessary
+            resource_metrics = {
+                'LUT': [res['lut_utilization_pct'] for res in self.optimizer_results],
+                'DSP48E': [res['dsp_utilization_pct'] for res in self.optimizer_results],
+                'FF': [res['ff_utilization_pct'] for res in self.optimizer_results]
+            }
             resource_utilization_path = os.path.join(self.config.paths.logs_dir, "resource_utilization.png")
             self.visualizer.plot_resource_utilization(resource_metrics, resource_utilization_path)
 
@@ -303,4 +342,3 @@ class BayesianOptimizer:
             result: The result object from the optimization step.
         """
         self.logger.info(f"Optimization step completed. Current best score: {self.best_score}")
-
