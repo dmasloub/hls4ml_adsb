@@ -60,6 +60,7 @@ def main():
                 continue
 
             X_test = df_test['X_scaled']
+            y_test = df_test['y']
             logger.info(f"Shape of {test_set} data: {X_test.shape}")  # Should be (num_samples, 6)
 
             # Prepare data for testing as tf.data.Dataset
@@ -68,7 +69,7 @@ def main():
 
             # Perform evaluation (assuming Evaluator handles the logic)
             evaluator = Evaluator(config)
-            metrics = evaluator.evaluate_model(autoencoder, test_dataset)
+            metrics = evaluator.evaluate_model(autoencoder, test_dataset, y_test)
             results[test_set] = metrics
             logger.info(f"Metrics for {test_set}: {metrics}")
 
