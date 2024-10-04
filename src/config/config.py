@@ -56,7 +56,7 @@ class OptimizationConfig:
         "bits": [4, 6, 8],
         "integer": [0, 2],
         "alpha": (0.1, 5.0),
-        "pruning_percent": (0.5, 1.0),
+        "pruning_percent": (0.5, 0.8), # must in range [0,1)
         "begin_step": (1000, 5000),
         "frequency": (200, 500)
     })
