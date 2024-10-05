@@ -51,6 +51,12 @@ This project implements an autoencoder for anomaly detection in ADS-B data using
 - Vivado v2020.1
 - Docker
 
+If cuda issues, run without cuda 
+
+```bash
+   export CUDA_VISIBLE_DEVICES=-1
+   ```
+
 ### Setup
 
 1. **Build Docker Image:**
