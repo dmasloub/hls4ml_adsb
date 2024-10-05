@@ -47,6 +47,8 @@ class BayesianOptimizer:
                  name='alpha'),
             Real(self.config.optimization.search_space['pruning_percent'][0],
                  self.config.optimization.search_space['pruning_percent'][1], name='pruning_percent'),
+            Real(self.config.optimization.search_space['standard_q_threshold'][0],
+                 self.config.optimization.search_space['standard_q_threshold'][1], name='standard_q_threshold'),
             Integer(self.config.optimization.search_space['begin_step'][0],
                     self.config.optimization.search_space['begin_step'][1], name='begin_step'),
             Integer(self.config.optimization.search_space['frequency'][0],
@@ -89,17 +91,18 @@ class BayesianOptimizer:
         except Exception as e:
             self.logger.error(f"Failed to save optimization checkpoint: {e}")
 
-    def _objective(self, bits: int, integer_bits: int, alpha: float, pruning_percent: float, begin_step: int,
+    def _objective(self, bits: int, integer_bits: int, alpha: float, pruning_percent: float, standard_q_threshold: float, begin_step: int,
                    frequency: int) -> float:
         try:
             self.logger.info(
-                f"Evaluating hyperparameters: bits={bits}, integer_bits={integer_bits}, alpha={alpha}, pruning_percent={pruning_percent}, begin_step={begin_step}, frequency={frequency}")
+                f"Evaluating hyperparameters: bits={bits}, integer_bits={integer_bits}, alpha={alpha}, pruning_percent={pruning_percent}, standard_q_threshold={standard_q_threshold} begin_step={begin_step}, frequency={frequency}")
 
             # Update model configuration
             self.config.model.bits = bits
             self.config.model.integer_bits = integer_bits
             self.config.model.alpha = alpha
             self.config.model.pruning_percent = pruning_percent
+            self.config.model.standard_q_threshold = standard_q_threshold
             self.config.model.begin_step = begin_step
             self.config.model.frequency = frequency
 
@@ -147,9 +150,9 @@ class BayesianOptimizer:
                 ModelCheckpoint(
                     filepath=os.path.join(self.config.paths.checkpoints_dir, 'best_model.h5'),
                     monitor='loss',
-                    save_best_only=True
+                    save_best_only=True,
+                    save_freq='epoch'
                 ),
-                TensorBoard(log_dir=os.path.join(self.config.paths.logs_dir, 'tensorboard_logs'))
             ]
 
             # Ensure necessary directories exist
@@ -236,9 +239,9 @@ class BayesianOptimizer:
             utilization = hls_converter.convert(model_filename='temp_autoencoder.h5', pipeline_filename='scaling_pipeline.pkl')
 
             # Extract resource utilization percentages
-            lut_utilization_pct = utilization.get('LUT', {}).get('Utilization (%)', 0)
-            dsp_utilization_pct = utilization.get('DSP48E', {}).get('Utilization (%)', 0)
-            ff_utilization_pct = utilization.get('FF', {}).get('Utilization (%)', 0)
+            lut_utilization_pct = utilization.get('LUT', {}).get('Total', 0) / utilization.get('LUT', {}).get('Available', 0) * 100
+            dsp_utilization_pct = utilization.get('DSP48E', {}).get('Total', 0) / utilization.get('DSP48E', {}).get('Available', 0) * 100
+            ff_utilization_pct = utilization.get('FF', {}).get('Total', 0) / utilization.get('FF', {}).get('Available', 0) * 100
 
             # Log resource utilizations
             self.logger.info("Resource utilization percentages:")
@@ -246,9 +249,9 @@ class BayesianOptimizer:
             self.logger.info(f"  DSP48E Utilization (%): {dsp_utilization_pct}")
             self.logger.info(f"  FF Utilization (%): {ff_utilization_pct}")
 
-            # Check if any utilization is outside [1%, 99%]
-            if not (1 <= lut_utilization_pct <= 99) or not (1 <= dsp_utilization_pct <= 99) or not (1 <= ff_utilization_pct <= 99):
-                self.logger.warning("Resource utilization out of bounds (1% - 99%). Assigning worst possible score.")
+            # Check if any utilization is outside (0%, 100%)
+            if not (0 <= lut_utilization_pct < 100) or not (0 <= dsp_utilization_pct < 100) or not (0 <= ff_utilization_pct < 100):
+                self.logger.warning("Resource utilization out of bounds (0% - 100%). Assigning worst possible score.")
                 return self.config.optimization.penalty_score
 
             # Normalize the utilization percentages to [0, 1]
@@ -271,6 +274,7 @@ class BayesianOptimizer:
                 'integer_bits': integer_bits,
                 'alpha': alpha,
                 'pruning_percent': pruning_percent,
+                'standard_q_threshold': standard_q_threshold,
                 'begin_step': begin_step,
                 'frequency': frequency,
                 'accuracy': accuracy,
@@ -289,6 +293,7 @@ class BayesianOptimizer:
                     'integer_bits': integer_bits,
                     'alpha': alpha,
                     'pruning_percent': pruning_percent,
+                    'standard_q_threshold': standard_q_threshold,
                     'begin_step': begin_step,
                     'frequency': frequency
                 }
@@ -322,6 +327,7 @@ class BayesianOptimizer:
                     integer_bits=params['integer_bits'],
                     alpha=params['alpha'],
                     pruning_percent=params['pruning_percent'],
+                    standard_q_threshold=params['standard_q_threshold'],
                     begin_step=params['begin_step'],
                     frequency=params['frequency']
                 )
