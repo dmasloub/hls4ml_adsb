@@ -73,7 +73,8 @@ def main():
             ModelCheckpoint(
                 filepath=os.path.join(config.paths.checkpoints_dir, 'best_model.h5'),
                 monitor='loss',
-                save_best_only=True
+                save_best_only=True,
+                save_freq='epoch'
             ),
             TensorBoard(log_dir=os.path.join(config.paths.logs_dir, 'tensorboard_logs'))
         ]
