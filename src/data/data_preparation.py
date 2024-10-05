@@ -293,7 +293,7 @@ class DataPreparer:
 
                 # Windowing
                 window_size = self.config.data.window_size
-                tsfresh = True  # As per the standalone script
+                tsfresh = True
                 X_windows, y_windows = self.get_windows_data(
                     data_frame=df[self.config.data.features],
                     labels=df.get('anomaly', [0] * len(df)),
