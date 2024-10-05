@@ -32,13 +32,12 @@ class DataConfig:
 class ModelConfig:
     # input_dim: int = 6                # Updated to match the number of features
     encoding_dim: int = 10
-    bits: int = 6                      # Changed to 6 to match provided code
+    bits: int = 32                      # Changed to 6 to match provided code
     integer_bits: int = 0
     alpha: float = 1.0
     learning_rate: float = 0.001
     batch_size: int = 128
     epochs: int = 50
-    validation_split: float = 0.2      # Optional: If using separate validation data, can be omitted
     standard_q_threshold: float = 0.00001
     pruning_percent: float = 0.75
     begin_step: int = 1000
@@ -47,7 +46,7 @@ class ModelConfig:
 
 @dataclass
 class OptimizationConfig:
-    total_calls: int = 50
+    total_calls: int = 60
     random_state: int = 42
     n_initial_points: int = 5
     lambda_reg: float = 0.5

@@ -9,18 +9,21 @@ from tensorflow.keras.layers import Input
 from qkeras import QDense, quantized_bits
 from src.config.config import ModelConfig
 from src.utils.logger import Logger
-
+import tensorflow_model_optimization as tfmot  # Import for pruning
 
 class QuantizedAutoencoder:
-    def __init__(self, config: ModelConfig, input_dim):
+    def __init__(self, config: ModelConfig, input_dim, pruning_params=None):
         """
         Initializes the QuantizedAutoencoder with the provided ModelConfig.
 
         Args:
             config (ModelConfig): Configuration object containing model parameters.
+            input_dim (int): Dimension of the input data.
+            pruning_params (dict, optional): Parameters for model pruning. Defaults to None.
         """
         self.config = config
         self.input_dim = input_dim
+        self.pruning_params = pruning_params  # Store pruning parameters
         self.logger = Logger.get_logger(__name__)  # Use module-specific logger
         self.model = self._build_model()
         self.compile()
@@ -66,6 +69,12 @@ class QuantizedAutoencoder:
 
             # Construct the autoencoder model
             autoencoder = Model(inputs=input_layer, outputs=output_layer, name='quantized_autoencoder')
+
+            # Apply pruning if pruning_params is provided
+            if self.pruning_params is not None:
+                autoencoder = tfmot.sparsity.keras.prune_low_magnitude(autoencoder, **self.pruning_params)
+                self.logger.info("Pruning applied to the model.")
+
             self.logger.info("Quantized Autoencoder model built successfully.")
             self.logger.debug(autoencoder.summary(print_fn=lambda x: self.logger.debug(x)))
             return autoencoder
@@ -121,6 +130,14 @@ class QuantizedAutoencoder:
             epochs = self.config.epochs
             self.logger.info("Starting training of the Quantized Autoencoder model.")
 
+            # Ensure pruning callbacks are included if pruning is enabled
+            if self.pruning_params is not None:
+                if callbacks is None:
+                    callbacks = []
+                # Check if UpdatePruningStep callback is in callbacks, if not, add it
+                if not any(isinstance(cb, tfmot.sparsity.keras.UpdatePruningStep) for cb in callbacks):
+                    callbacks.append(tfmot.sparsity.keras.UpdatePruningStep())
+
             history = self.model.fit(
                 train_data,
                 epochs=epochs,
@@ -131,6 +148,17 @@ class QuantizedAutoencoder:
             return history
         except Exception as e:
             self.logger.error(f"Error during training: {e}")
+            raise
+
+    def strip_pruning(self):
+        """
+        Strips the pruning wrappers from the model after training.
+        """
+        try:
+            self.model = tfmot.sparsity.keras.strip_pruning(self.model)
+            self.logger.info("Pruning wrappers stripped from the model.")
+        except Exception as e:
+            self.logger.error(f"Error stripping pruning wrappers: {e}")
             raise
 
     def save_model(self, filepath: str):
@@ -161,6 +189,12 @@ class QuantizedAutoencoder:
                 'quantized_bits': quantized_bits
             }
 
+            # Include pruning custom objects if pruning is enabled
+            if self.pruning_params is not None:
+                custom_objects.update({
+                    'PruneLowMagnitude': tfmot.sparsity.keras.prune_low_magnitude.PruneLowMagnitude
+                })
+
             self.model = tf.keras.models.load_model(filepath, custom_objects=custom_objects, compile=False)
             self.compile()  # Re-compile after loading
             self.logger.info(f"Model loaded successfully from {filepath}.")
@@ -173,10 +207,10 @@ class QuantizedAutoencoder:
         Generates predictions using the trained autoencoder model.
 
         Args:
-            data (tf.data.Dataset): Input data for prediction.
+            data (Union[np.ndarray, tf.data.Dataset]): Input data for prediction.
 
         Returns:
-            tf.Tensor: Predicted outputs.
+            np.ndarray: Predicted outputs.
         """
         try:
             predictions = self.model.predict(data)

@@ -17,7 +17,7 @@ from src.utils.hls_utils import HLSUtils
 
 
 class Evaluator:
-    def __init__(self, config):
+    def __init__(self, config, metrics=None):
         """
         Initializes the Evaluator with the provided configuration.
 
@@ -25,6 +25,7 @@ class Evaluator:
             config (Config): Configuration object containing paths and settings.
         """
         self.config = config
+        self.metrics = metrics
         self.logger = Logger.get_logger(__name__)
 
     def evaluate_model(self, model, X_test: np.ndarray, y_test: np.ndarray) -> Dict[str, Any]:
@@ -50,14 +51,17 @@ class Evaluator:
             reconstruction_errors = np.linalg.norm(X_test - reconstructed, axis=1) ** 2
             self.logger.debug("Reconstruction errors calculated.")
 
-            # Load mean and std from metrics.pkl
-            metrics_path = os.path.join(self.config.paths.model_dir, 'metrics.pkl')
-            if not os.path.exists(metrics_path):
-                raise FileNotFoundError(f"Metrics file not found at {metrics_path}.")
+            if self.metrics is None:
+                # Load mean and std from metrics.pkl
+                metrics_path = os.path.join(self.config.paths.model_dir, 'metrics.pkl')
+                if not os.path.exists(metrics_path):
+                    raise FileNotFoundError(f"Metrics file not found at {metrics_path}.")
 
-            with open(metrics_path, 'rb') as f:
-                mu, std = pickle.load(f)
-            self.logger.debug(f"Loaded metrics: mu={mu}, std={std}")
+                with open(metrics_path, 'rb') as f:
+                    mu, std = pickle.load(f)
+                self.logger.debug(f"Loaded metrics: mu={mu}, std={std}")
+            else:
+                mu, std = self.metrics
 
             # Generate anomaly scores
             anomaly_scores = 1 - stats.norm.sf(reconstruction_errors, mu, std)
@@ -82,8 +86,8 @@ class Evaluator:
             avg_delay = EvaluationUtils.get_average_detection_delay(y_true=y_test.tolist(), y_pred=y_pred.tolist())
             self.logger.info(f"Average Detection Delay: {avg_delay}")
 
-            # Compile metrics
-            metrics = {
+            # Compile evaluation metrics
+            eval_metrics = {
                 'accuracy': accuracy,
                 'precision': precision,
                 'recall': recall,
@@ -93,7 +97,7 @@ class Evaluator:
                 'y_pred': y_pred
             }
 
-            return metrics
+            return eval_metrics
 
         except Exception as e:
             self.logger.error(f"Error during model evaluation: {e}", exc_info=True)
