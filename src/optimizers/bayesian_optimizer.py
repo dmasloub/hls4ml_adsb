@@ -3,8 +3,9 @@
 import os
 import pickle
 from typing import Dict, Any, List
+
+import numpy as np
 import tensorflow as tf
-import tensorflow_model_optimization as tfmot
 from src.config.config import Config
 from src.utils.logger import Logger
 from src.utils.common_utils import CommonUtils
@@ -19,7 +20,8 @@ from skopt import gp_minimize
 from skopt.space import Real, Integer, Categorical
 from skopt.utils import use_named_args
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
-from tensorflow_model_optimization.python.core.sparsity.keras import prune, pruning_schedule, pruning_callbacks
+import tensorflow_model_optimization as tfmot
+from tensorflow_model_optimization.python.core.sparsity.keras import pruning_schedule
 
 class BayesianOptimizer:
     def __init__(self, config: Config):
@@ -117,17 +119,16 @@ class BayesianOptimizer:
                 self.logger.info("Data preprocessing completed and saved.")
 
             # Access preprocessed data
-            train_data = preprocessed_datasets['train']['X_scaled']
-            validation_data = preprocessed_datasets['validation']['X_scaled']
+            df_train = preprocessed_datasets['train']
 
-            # Get input dimension
-            input_dim = train_data.shape[1]
+            if df_train is None or df_train['X_scaled'].size == 0:
+                raise ValueError("Training dataset is empty after preprocessing.")
 
-            # Initialize the autoencoder model
-            autoencoder = QuantizedAutoencoder(self.config.model, input_dim)
-            self.logger.info("Autoencoder model initialized.")
+            X_train = df_train['X_scaled']
+            y_train = df_train['y']
+            self.logger.info(f"Shape of training data: {X_train.shape}")
 
-            # Apply pruning to the model
+            # Define pruning parameters
             pruning_params = {
                 'pruning_schedule': pruning_schedule.ConstantSparsity(
                     target_sparsity=pruning_percent,
@@ -135,46 +136,72 @@ class BayesianOptimizer:
                     frequency=frequency
                 )
             }
-            pruned_model = prune.prune_low_magnitude(autoencoder.model, **pruning_params)
-            self.logger.info("Pruning applied to the model.")
 
-            # Compile the pruned model
-            pruned_model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=self.config.model.learning_rate),
-                loss='mean_squared_error',
-                metrics=['mse', 'mae']
-            )
-            self.logger.info("Pruned model compiled.")
+            # Initialize the autoencoder model with pruning
+            autoencoder = QuantizedAutoencoder(self.config.model, X_train.shape[1], pruning_params=pruning_params)
+            self.logger.info("Autoencoder model with pruning initialized.")
 
-            # Define pruning callbacks
+            # Define callbacks
             callbacks = [
-                pruning_callbacks.UpdatePruningStep(),
-                EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+                EarlyStopping(monitor='loss', patience=10, restore_best_weights=True),
+                ModelCheckpoint(
+                    filepath=os.path.join(self.config.paths.checkpoints_dir, 'best_model.h5'),
+                    monitor='loss',
+                    save_best_only=True
+                ),
+                TensorBoard(log_dir=os.path.join(self.config.paths.logs_dir, 'tensorboard_logs'))
             ]
 
+            # Ensure necessary directories exist
+            CommonUtils.create_directory(self.config.paths.checkpoints_dir)
+            CommonUtils.create_directory(self.config.paths.logs_dir)
+            CommonUtils.create_directory(self.config.paths.model_dir)
+
             # Prepare TensorFlow datasets
-            train_dataset = tf.data.Dataset.from_tensor_slices((train_data, train_data))
+            train_dataset = tf.data.Dataset.from_tensor_slices((X_train, X_train))
             train_dataset = train_dataset.batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
             self.logger.info("Training TensorFlow dataset prepared.")
 
-            validation_dataset = tf.data.Dataset.from_tensor_slices((validation_data, validation_data))
-            validation_dataset = validation_dataset.batch(self.config.model.batch_size).prefetch(tf.data.AUTOTUNE)
-            self.logger.info("Validation TensorFlow dataset prepared.")
-
-            # Train the pruned model
-            history = pruned_model.fit(
-                train_dataset,
-                epochs=self.config.model.epochs,
-                validation_data=validation_dataset,
+            # Train the autoencoder
+            history = autoencoder.train(
+                train_data=train_dataset,
                 callbacks=callbacks
             )
-            self.logger.info("Pruned model training completed.")
+            self.logger.info("Model training completed.")
 
             # Strip pruning wrappers
-            stripped_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
+            autoencoder.strip_pruning()
+            self.logger.info("Pruning wrappers stripped from the model.")
+
+            # Get validation data
+            df_validation = preprocessed_datasets.get('validation')
+            if df_validation is None:
+                raise ValueError("Validation dataset not found in preprocessed datasets.")
+
+            X_validation = df_validation['X_scaled']
+            y_validation = df_validation['y']
+            self.logger.info(f"Shape of validation data: {X_validation.shape}")
+            self.logger.info(f"Shape of validation labels: {y_validation.shape}")
+
+            # Predict
+            preds_val = autoencoder.predict(X_validation)
+
+            # Calculate reconstruction errors
+            reconstruction_errors = np.linalg.norm(X_validation - preds_val, axis=1) ** 2
+
+            # Calculate mean and standard deviation of reconstruction errors
+            mu = np.mean(reconstruction_errors)
+            std = np.std(reconstruction_errors)
+
+            metrics = (mu, std)
+
+            metrics_save_path = os.path.join(self.config.paths.model_dir, 'metrics.pkl')
+            CommonUtils.save_object(metrics, metrics_save_path)
+
+            self.logger.info(f"Evaluation Metrics: {metrics}")
 
             # Evaluate the model
-            evaluator = Evaluator(self.config)
+            evaluator = Evaluator(self.config, metrics)
             test_data = preprocessed_datasets['test_manoeuver']
             X_test = test_data['X_scaled']
             y_test = test_data['y']
@@ -202,7 +229,7 @@ class BayesianOptimizer:
 
             # Save the trained model
             temp_model_path = os.path.join(self.config.paths.model_dir, 'temp_autoencoder.h5')
-            stripped_model.save(temp_model_path)
+            autoencoder.save_model(temp_model_path)
 
             # Convert to HLS and extract resource usage
             hls_converter = HLSConverter(build_model=True)
@@ -332,7 +359,6 @@ class BayesianOptimizer:
             self.visualizer.plot_optimization_progress(self.optimizer_results, optimization_progress_path)
 
             # Plot resource utilization if needed
-            # Assuming 'resource_usage' is a key in optimizer_results; adjust as necessary
             resource_metrics = {
                 'LUT': [res['lut_utilization_pct'] for res in self.optimizer_results],
                 'DSP48E': [res['dsp_utilization_pct'] for res in self.optimizer_results],

@@ -54,8 +54,8 @@ def main():
 
         X_validation = df_validation['X_scaled']
         y_validation = df_validation['y']
-        logger.info(f"Shape of validation data: {X_validation.shape}")  # Should be (num_samples, 6)
-        logger.info(f"Shape of validation labels: {y_validation.shape}")  # Should be (num_samples,)
+        logger.info(f"Shape of validation data: {X_validation.shape}")
+        logger.info(f"Shape of validation labels: {y_validation.shape}")
 
         # Define model
         autoencoder = QuantizedAutoencoder(config.model, X_validation.shape[1])

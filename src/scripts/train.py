@@ -4,7 +4,7 @@ import os
 import pickle
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
-from tensorflow_model_optimization.python.core.sparsity.keras import prune, pruning_schedule, pruning_callbacks
+from tensorflow_model_optimization.python.core.sparsity.keras import pruning_schedule
 from src.utils.common_utils import CommonUtils
 from src.utils.logger import Logger
 from src.config.config import Config
@@ -46,7 +46,6 @@ def main():
 
         # Access preprocessed training and validation data
         df_train = preprocessed_datasets.get('train')
-        df_validation = preprocessed_datasets.get('validation')
 
         if df_train is None or df_train['X_scaled'].size == 0:
             raise ValueError("Training dataset is empty after preprocessing.")
@@ -55,11 +54,7 @@ def main():
         y_train = df_train['y']
         logger.info(f"Shape of training data: {X_train.shape}")
 
-        # Initialize the autoencoder model
-        autoencoder = QuantizedAutoencoder(config.model, X_train.shape[1])
-        logger.info("Autoencoder model initialized.")
-
-        # Apply pruning
+        # Define pruning parameters
         pruning_params = {
             'pruning_schedule': pruning_schedule.ConstantSparsity(
                 target_sparsity=config.model.pruning_percent,
@@ -67,24 +62,17 @@ def main():
                 frequency=config.model.frequency
             )
         }
-        pruned_model = prune.prune_low_magnitude(autoencoder.model, **pruning_params)
-        logger.info("Pruning applied to the model.")
 
-        # Compile the pruned model
-        pruned_model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=config.model.learning_rate),
-            loss='mean_squared_error',
-            metrics=['mse', 'mae']
-        )
-        logger.info("Pruned model compiled.")
+        # Initialize the autoencoder model with pruning
+        autoencoder = QuantizedAutoencoder(config.model, X_train.shape[1], pruning_params=pruning_params)
+        logger.info("Autoencoder model with pruning initialized.")
 
         # Define callbacks
         callbacks = [
-            EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
-            pruning_callbacks.UpdatePruningStep(),
+            EarlyStopping(monitor='loss', patience=10, restore_best_weights=True),
             ModelCheckpoint(
                 filepath=os.path.join(config.paths.checkpoints_dir, 'best_model.h5'),
-                monitor='val_loss',
+                monitor='loss',
                 save_best_only=True
             ),
             TensorBoard(log_dir=os.path.join(config.paths.logs_dir, 'tensorboard_logs'))
@@ -100,29 +88,14 @@ def main():
         train_dataset = train_dataset.batch(config.model.batch_size).prefetch(tf.data.AUTOTUNE)
         logger.info("Training TensorFlow dataset prepared.")
 
-        validation_dataset = None
-        if df_validation is not None and df_validation['X_scaled'].size > 0:
-            X_val = df_validation['X_scaled']
-            y_val = df_validation['y']
-            logger.info(f"Shape of validation data: {X_val.shape}")
+        # Train the autoencoder
+        history = autoencoder.train(train_data=train_dataset, callbacks=callbacks)
 
-            validation_dataset = tf.data.Dataset.from_tensor_slices((X_val, X_val))
-            validation_dataset = validation_dataset.batch(config.model.batch_size).prefetch(tf.data.AUTOTUNE)
-            logger.info("Validation TensorFlow dataset prepared.")
-        else:
-            logger.warning("Validation dataset is empty or not provided. Proceeding without validation.")
-
-        # Train the pruned autoencoder
-        history = pruned_model.fit(
-            train_dataset,
-            epochs=config.model.epochs,
-            validation_data=validation_dataset,
-            callbacks=callbacks
-        )
-        logger.info("Pruned model training completed.")
+        logger.info("Model training completed.")
 
         # Strip pruning wrappers
-        stripped_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
+        autoencoder.strip_pruning()
+        logger.info("Pruning wrappers stripped from the model.")
 
         # Plot training history
         visualizer = Visualizer(config)
@@ -130,10 +103,10 @@ def main():
         visualizer.plot_training_history(history, save_path=plot_path)
         logger.info(f"Training history plot saved to {plot_path}.")
 
-        # Save the stripped model
+        # Save the final model
         model_save_path = os.path.join(config.paths.model_dir, 'autoencoder.h5')
-        stripped_model.save(model_save_path)
-        logger.info(f"Trained pruned model saved to {model_save_path}.")
+        autoencoder.save_model(model_save_path)
+        logger.info(f"Trained model saved to {model_save_path}.")
 
     except Exception as e:
         logger.error(f"An error occurred during training: {e}", exc_info=True)
