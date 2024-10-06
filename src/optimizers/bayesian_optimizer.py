@@ -223,6 +223,11 @@ class BayesianOptimizer:
             recall = evaluation_metrics.get('recall', 0)
             self.logger.info(f"Model recall: {recall}")
 
+            # Check any Metric under 0.7
+            if (accuracy < 0.7) or (precision < 0.7) or (recall < 0.7):
+                self.logger.warning("Accuracy or Precision or Recall < 0.7. Assigning worst possible score.")
+                return self.config.optimization.penalty_score
+
             # Compute the average metrics
             average_metrics = (accuracy + precision + recall) / 3.0
 
