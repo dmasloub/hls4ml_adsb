@@ -32,6 +32,7 @@ class BayesianOptimizer:
             config (Config): Configuration object containing optimization settings.
         """
         self.config = config
+        self.step = 1
         self.logger = Logger.get_logger(__name__)
         self.visualizer = Visualizer(config)
         self.optimizer_results = []  # To store optimization results
@@ -389,4 +390,5 @@ class BayesianOptimizer:
         Args:
             result: The result object from the optimization step.
         """
-        self.logger.info(f"Optimization step completed. Current best score: {self.best_score}")
+        self.logger.info(f"Optimization step number {self.step} completed. Current best score: {self.best_score}")
+        self.step += 1
