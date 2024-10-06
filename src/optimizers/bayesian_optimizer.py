@@ -50,10 +50,10 @@ class BayesianOptimizer:
                  self.config.optimization.search_space['pruning_percent'][1], name='pruning_percent'),
             Real(self.config.optimization.search_space['standard_q_threshold'][0],
                  self.config.optimization.search_space['standard_q_threshold'][1], name='standard_q_threshold'),
-            #Integer(self.config.optimization.search_space['begin_step'][0],
-            #        self.config.optimization.search_space['begin_step'][1], name='begin_step'),
-            #Integer(self.config.optimization.search_space['frequency'][0],
-            #        self.config.optimization.search_space['frequency'][1], name='frequency')
+            Integer(self.config.optimization.search_space['begin_step'][0],
+                    self.config.optimization.search_space['begin_step'][1], name='begin_step'),
+            Integer(self.config.optimization.search_space['frequency'][0],
+                    self.config.optimization.search_space['frequency'][1], name='frequency')
         ]
 
         # Load checkpoint if exists
@@ -93,13 +93,13 @@ class BayesianOptimizer:
             self.logger.error(f"Failed to save optimization checkpoint: {e}")
 
     def _objective(self, bits: int, integer_bits: int, alpha: float, pruning_percent: float, standard_q_threshold: float,
-                   # begin_step: int,
-                   # frequency: int
+                   begin_step: int,
+                   frequency: int
                    ) -> float:
         try:
             self.logger.info(
                 f"Evaluating hyperparameters: bits={bits}, integer_bits={integer_bits}, alpha={alpha}, pruning_percent={pruning_percent}, standard_q_threshold={standard_q_threshold} "
-                #f"begin_step={begin_step}, frequency={frequency}"
+                f"begin_step={begin_step}, frequency={frequency}"
             )
 
             # Update model configuration
@@ -108,8 +108,8 @@ class BayesianOptimizer:
             self.config.model.alpha = alpha
             self.config.model.pruning_percent = pruning_percent
             self.config.model.standard_q_threshold = standard_q_threshold
-            # self.config.model.begin_step = begin_step
-            # self.config.model.frequency = frequency
+            self.config.model.begin_step = begin_step
+            self.config.model.frequency = frequency
 
             # Load preprocessed data
             preprocessed_data_path = self.config.paths.preprocessed_data_path
@@ -249,9 +249,9 @@ class BayesianOptimizer:
             utilization = hls_converter.convert(model_filename='temp_autoencoder.h5', pipeline_filename='scaling_pipeline.pkl')
 
             # Extract resource utilization percentages
-            lut_utilization_pct = utilization.get('LUT', {}).get('Total', 0) / utilization.get('LUT', {}).get('Available', 0) * 100
-            dsp_utilization_pct = utilization.get('DSP48E', {}).get('Total', 0) / utilization.get('DSP48E', {}).get('Available', 0) * 100
-            ff_utilization_pct = utilization.get('FF', {}).get('Total', 0) / utilization.get('FF', {}).get('Available', 0) * 100
+            lut_utilization_pct = utilization.get('LUT', {}).get('Total', 0) / 53200 * 100
+            dsp_utilization_pct = utilization.get('DSP48E', {}).get('Total', 0) / 220 * 100
+            ff_utilization_pct = utilization.get('FF', {}).get('Total', 0) / 106400 * 100
 
             # Log resource utilizations
             self.logger.info("Resource utilization percentages:")
@@ -285,8 +285,8 @@ class BayesianOptimizer:
                 'alpha': alpha,
                 'pruning_percent': pruning_percent,
                 'standard_q_threshold': standard_q_threshold,
-                # 'begin_step': begin_step,
-                # 'frequency': frequency,
+                'begin_step': begin_step,
+                'frequency': frequency,
                 'accuracy': accuracy,
                 'lut_utilization_pct': lut_utilization_pct,
                 'dsp_utilization_pct': dsp_utilization_pct,
@@ -304,8 +304,8 @@ class BayesianOptimizer:
                     'alpha': alpha,
                     'pruning_percent': pruning_percent,
                     'standard_q_threshold': standard_q_threshold,
-                    # 'begin_step': begin_step,
-                    # 'frequency': frequency
+                    'begin_step': begin_step,
+                    'frequency': frequency
                 }
                 self.logger.info(f"New best score: {self.best_score} with hyperparameters: {self.best_hyperparameters}")
 
@@ -338,8 +338,8 @@ class BayesianOptimizer:
                     alpha=params['alpha'],
                     pruning_percent=params['pruning_percent'],
                     standard_q_threshold=params['standard_q_threshold'],
-                    # begin_step=params['begin_step'],
-                    # frequency=params['frequency']
+                    begin_step=params['begin_step'],
+                    frequency=params['frequency']
                 )
 
             # Number of calls already made (from checkpoint)
