@@ -127,50 +127,61 @@ def main():
         CommonUtils.save_object(metrics, metrics_save_path)
         logger.info(f"Validation Metrics saved to {metrics_save_path}: Mean={mu}, Std={std}")
 
-        # Evaluate the model on test data
-        logger.info("Evaluating the model on test data.")
+        # Define all test dataset keys
+        test_dataset_keys = ['test_manoeuver', 'test_noise', 'test_departing', 'test_landing']
+
+        # Initialize evaluator with validation metrics
         evaluator = Evaluator(config, metrics)
-        test_data = preprocessed_datasets.get('test_manoeuver')
-        if test_data is None or test_data['X_scaled'].size == 0:
-            raise ValueError("Test dataset is empty or not found.")
 
-        X_test = test_data['X_scaled']
-        y_test = test_data['y']
+        # Directory to save evaluation metrics per test dataset
+        evaluation_metrics_dir = os.path.join(config.paths.model_dir, 'evaluation_metrics')
+        CommonUtils.create_directory(evaluation_metrics_dir)
 
-        evaluation_metrics = evaluator.evaluate_model(autoencoder, X_test, y_test)
-        accuracy = evaluation_metrics.get('accuracy', 0)
-        precision = evaluation_metrics.get('precision', 0)
-        recall = evaluation_metrics.get('recall', 0)
+        # Loop through each test dataset and evaluate
+        for test_key in test_dataset_keys:
+            logger.info(f"Evaluating the model on '{test_key}' dataset.")
+            test_data = preprocessed_datasets.get(test_key)
+            if test_data is None or test_data['X_scaled'].size == 0:
+                logger.warning(f"Test dataset '{test_key}' is empty or not found. Skipping evaluation for this dataset.")
+                continue
 
-        logger.info("Model Evaluation Metrics on Test Data:")
-        logger.info(f"  Accuracy: {accuracy}")
-        logger.info(f"  Precision: {precision}")
-        logger.info(f"  Recall: {recall}")
+            X_test = test_data['X_scaled']
+            y_test = test_data['y']
 
-        # Print metrics to console
-        print("Model Evaluation Metrics on Test Data:")
-        print(f"  Accuracy: {accuracy}")
-        print(f"  Precision: {precision}")
-        print(f"  Recall: {recall}")
+            evaluation_metrics = evaluator.evaluate_model(autoencoder, X_test, y_test)
+            accuracy = evaluation_metrics.get('accuracy', 0)
+            precision = evaluation_metrics.get('precision', 0)
+            recall = evaluation_metrics.get('recall', 0)
+
+            logger.info(f"Model Evaluation Metrics on '{test_key}' Test Data:")
+            logger.info(f"  Accuracy: {accuracy}")
+            logger.info(f"  Precision: {precision}")
+            logger.info(f"  Recall: {recall}")
+
+            # Print metrics to console
+            print(f"Model Evaluation Metrics on '{test_key}' Test Data:")
+            print(f"  Accuracy: {accuracy}")
+            print(f"  Precision: {precision}")
+            print(f"  Recall: {recall}")
+
+            # Save evaluation metrics to a pickle file
+            evaluation_save_path = os.path.join(evaluation_metrics_dir, f'{test_key}_metrics.pkl')
+            CommonUtils.save_object(evaluation_metrics, evaluation_save_path)
+            logger.info(f"Evaluation Metrics for '{test_key}' saved to {evaluation_save_path}")
 
         # Convert to HLS and extract resource usage
         logger.info("Converting the trained model to HLS and extracting resource usage.")
         hls_converter = HLSConverter(build_model=True)
-        # hls_conversion_path = os.path.join(config.paths.model_dir, 'trained_autoencoder.h5')
-        scaling_pipeline_path = os.path.join(config.paths.model_dir,
-                                             'scaling_pipeline.pkl')  # Ensure this path is correct
+        scaling_pipeline_path = os.path.join(config.paths.model_dir, 'scaling_pipeline.pkl')  # Ensure this path is correct
         utilization = hls_converter.convert(
             model_filename='trained_autoencoder.h5',
             pipeline_filename=scaling_pipeline_path
         )
 
         # Extract resource utilization percentages
-        lut_utilization_pct = (utilization.get('LUT', {}).get('Total', 0) / utilization.get('LUT', {}).get('Available',
-                                                                                                           1)) * 100
-        dsp_utilization_pct = (utilization.get('DSP48E', {}).get('Total', 0) / utilization.get('DSP48E', {}).get(
-            'Available', 1)) * 100
-        ff_utilization_pct = (utilization.get('FF', {}).get('Total', 0) / utilization.get('FF', {}).get('Available',
-                                                                                                        1)) * 100
+        lut_utilization_pct = (utilization.get('LUT', {}).get('Total', 0) / utilization.get('LUT', {}).get('Available', 1)) * 100
+        dsp_utilization_pct = (utilization.get('DSP48E', {}).get('Total', 0) / utilization.get('DSP48E', {}).get('Available', 1)) * 100
+        ff_utilization_pct = (utilization.get('FF', {}).get('Total', 0) / utilization.get('FF', {}).get('Available', 1)) * 100
 
         # Log resource utilizations
         logger.info("Resource Utilization Percentages:")
