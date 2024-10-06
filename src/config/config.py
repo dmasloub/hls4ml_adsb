@@ -37,7 +37,7 @@ class ModelConfig:
     alpha: float = 5
     learning_rate: float = 0.001
     batch_size: int = 128
-    epochs: int = 50
+    epochs: int = 100
     standard_q_threshold: float = 0.3777
     pruning_percent: float = 0.5634
     begin_step: int = 1000
@@ -52,9 +52,9 @@ class OptimizationConfig:
     lambda_reg: float = 0.5
     penalty_score: float = 1e6
     search_space: dict = field(default_factory=lambda: {
-        "bits": [4, 6, 8, 16],
+        "bits": [4, 6],
         "integer": [0, 2, 4],
-        "alpha": (0.1, 10.0),
+        "alpha": (4.0, 10.0),
         "pruning_percent": (0.4, 0.8),
         "standard_q_threshold": (0.00001, 0.6),
         "begin_step": (0, 5000),
