@@ -13,6 +13,7 @@ from src.data.data_loader import DataLoader
 from src.data.data_preparation import DataPreparer
 from src.evaluation.evaluator import Evaluator
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
+from tensorflow_model_optimization.python.core.sparsity.keras import pruning_schedule
 
 
 def main():
@@ -57,10 +58,19 @@ def main():
         logger.info(f"Shape of validation data: {X_validation.shape}")
         logger.info(f"Shape of validation labels: {y_validation.shape}")
 
-        # Define model
-        autoencoder = QuantizedAutoencoder(config.model, X_validation.shape[1])
+        # Define pruning parameters
+        pruning_params = {
+            'pruning_schedule': pruning_schedule.ConstantSparsity(
+                target_sparsity=config.model.pruning_percent,
+                begin_step=config.model.begin_step,
+                frequency=config.model.frequency
+            )
+        }
 
-        model_save_path = os.path.join(config.paths.model_dir, 'autoencoder.h5')
+        # Define model
+        autoencoder = QuantizedAutoencoder(config.model, X_validation.shape[1], pruning_params=pruning_params)
+
+        model_save_path = os.path.join(config.paths.checkpoints_dir, 'best_model.h5')
         autoencoder.load_model(model_save_path)
 
         # Predict
@@ -75,7 +85,7 @@ def main():
 
         metrics = (mu, std)
 
-        metrics_save_path = os.path.join(config.paths.model_dir, 'metrics.pkl')
+        metrics_save_path = os.path.join(config.paths.checkpoints_dir, 'metrics.pkl')
         CommonUtils.save_object(metrics, metrics_save_path)
 
         logger.info(f"Evaluation Metrics: {metrics}")

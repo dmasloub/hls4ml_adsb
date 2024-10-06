@@ -32,16 +32,16 @@ class DataConfig:
 class ModelConfig:
     # input_dim: int = 6                # Updated to match the number of features
     encoding_dim: int = 10
-    bits: int = 64                      # Changed to 6 to match provided code
-    integer_bits: int = 16
-    alpha: float = 1.0
+    bits: int = 4                      # Changed to 6 to match provided code
+    integer_bits: int = 2
+    alpha: float = 5
     learning_rate: float = 0.001
     batch_size: int = 128
     epochs: int = 50
-    standard_q_threshold: float = 0.01
-    pruning_percent: float = 0.0
+    standard_q_threshold: float = 0.3777
+    pruning_percent: float = 0.5634
     begin_step: int = 1000
-    frequency: int = 200
+    frequency: int = 352
 
 
 @dataclass
@@ -54,10 +54,10 @@ class OptimizationConfig:
     search_space: dict = field(default_factory=lambda: {
         "bits": [4, 6, 8, 16],
         "integer": [0, 2, 4],
-        "alpha": (0.1, 5.0),
+        "alpha": (0.1, 10.0),
         "pruning_percent": (0.4, 0.8),
-        "standard_q_threshold": (0.00001, 1),
-        "begin_step": (1000, 5000),
+        "standard_q_threshold": (0.00001, 0.6),
+        "begin_step": (0, 5000),
         "frequency": (200, 500)
     })
 

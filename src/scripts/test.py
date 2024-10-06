@@ -67,11 +67,15 @@ def main():
             test_dataset = tf.data.Dataset.from_tensor_slices(X_test).batch(config.model.batch_size).prefetch(tf.data.AUTOTUNE)
             logger.info(f"{test_set} dataset prepared.")
 
+            # Load metrics for evaluation
+            metrics_load_path = os.path.join(config.paths.model_dir, 'metrics.pkl')
+            metrics = CommonUtils.load_object(metrics_load_path)
+
             # Perform evaluation (assuming Evaluator handles the logic)
-            evaluator = Evaluator(config)
-            metrics = evaluator.evaluate_model(autoencoder, X_test, y_test)
-            results[test_set] = metrics
-            logger.info(f"Metrics for {test_set}: {metrics}")
+            evaluator = Evaluator(config, metrics)
+            eval_metrics = evaluator.evaluate_model(autoencoder, X_test, y_test)
+            results[test_set] = eval_metrics
+            logger.info(f"Metrics for {test_set}: {eval_metrics}")
 
         logger.info(f"All test metrics: {results}")
 
