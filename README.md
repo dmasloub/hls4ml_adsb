@@ -1,7 +1,3 @@
-Sure! Here's the README you can copy and paste:
-
----
-
 # Quantized Autoencoder for Anomaly Detection in ADS-B Data
 
 This repository contains the code for a scientific paper focused on designing a quantized autoencoder for anomaly detection in Automatic Dependent Surveillance-Broadcast (ADS-B) data. The project leverages techniques such as data preprocessing, model quantization, pruning, and hardware acceleration using High-Level Synthesis (HLS) for FPGA deployment.
