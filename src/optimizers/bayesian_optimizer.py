@@ -32,6 +32,7 @@ class BayesianOptimizer:
             config (Config): Configuration object containing optimization settings.
         """
         self.config = config
+        self.step = 1
         self.logger = Logger.get_logger(__name__)
         self.visualizer = Visualizer(config)
         self.optimizer_results = []  # To store optimization results
@@ -91,11 +92,15 @@ class BayesianOptimizer:
         except Exception as e:
             self.logger.error(f"Failed to save optimization checkpoint: {e}")
 
-    def _objective(self, bits: int, integer_bits: int, alpha: float, pruning_percent: float, standard_q_threshold: float, begin_step: int,
-                   frequency: int) -> float:
+    def _objective(self, bits: int, integer_bits: int, alpha: float, pruning_percent: float, standard_q_threshold: float,
+                   begin_step: int,
+                   frequency: int
+                   ) -> float:
         try:
             self.logger.info(
-                f"Evaluating hyperparameters: bits={bits}, integer_bits={integer_bits}, alpha={alpha}, pruning_percent={pruning_percent}, standard_q_threshold={standard_q_threshold} begin_step={begin_step}, frequency={frequency}")
+                f"Evaluating hyperparameters: bits={bits}, integer_bits={integer_bits}, alpha={alpha}, pruning_percent={pruning_percent}, standard_q_threshold={standard_q_threshold} "
+                f"begin_step={begin_step}, frequency={frequency}"
+            )
 
             # Update model configuration
             self.config.model.bits = bits
@@ -135,8 +140,8 @@ class BayesianOptimizer:
             pruning_params = {
                 'pruning_schedule': pruning_schedule.ConstantSparsity(
                     target_sparsity=pruning_percent,
-                    begin_step=begin_step,
-                    frequency=frequency
+                    begin_step=self.config.model.begin_step,
+                    frequency=self.config.model.frequency
                 )
             }
 
@@ -146,7 +151,7 @@ class BayesianOptimizer:
 
             # Define callbacks
             callbacks = [
-                EarlyStopping(monitor='loss', patience=10, restore_best_weights=True),
+                # EarlyStopping(monitor='loss', patience=10, restore_best_weights=True),
                 ModelCheckpoint(
                     filepath=os.path.join(self.config.paths.checkpoints_dir, 'best_model.h5'),
                     monitor='loss',
@@ -244,9 +249,9 @@ class BayesianOptimizer:
             utilization = hls_converter.convert(model_filename='temp_autoencoder.h5', pipeline_filename='scaling_pipeline.pkl')
 
             # Extract resource utilization percentages
-            lut_utilization_pct = utilization.get('LUT', {}).get('Total', 0) / utilization.get('LUT', {}).get('Available', 0) * 100
-            dsp_utilization_pct = utilization.get('DSP48E', {}).get('Total', 0) / utilization.get('DSP48E', {}).get('Available', 0) * 100
-            ff_utilization_pct = utilization.get('FF', {}).get('Total', 0) / utilization.get('FF', {}).get('Available', 0) * 100
+            lut_utilization_pct = utilization.get('LUT', {}).get('Total', 0) / 53200 * 100
+            dsp_utilization_pct = utilization.get('DSP48E', {}).get('Total', 0) / 220 * 100
+            ff_utilization_pct = utilization.get('FF', {}).get('Total', 0) / 106400 * 100
 
             # Log resource utilizations
             self.logger.info("Resource utilization percentages:")
@@ -389,4 +394,5 @@ class BayesianOptimizer:
         Args:
             result: The result object from the optimization step.
         """
-        self.logger.info(f"Optimization step completed. Current best score: {self.best_score}")
+        self.logger.info(f"Optimization step number {self.step} completed. Current best score: {self.best_score}")
+        self.step += 1
