@@ -15,7 +15,7 @@ from sklearn.preprocessing import StandardScaler
 
 from src.config.config import Config
 from src.utils.logger import Logger
-from src.utils.evaluation import EvaluationUtils  # For get_average_detection_delay
+from src.utils.evaluation import EvaluationUtils  
 from src.utils.common_utils import CommonUtils
 
 
@@ -282,7 +282,7 @@ class DataPreparer:
                     threshold=self.config.data.std_threshold_train
                 )
 
-                # Differencing (if configured and applicable)
+                # Differencing
                 if self.config.data.diff_data:
                     df = self.difference_data(
                         df,
@@ -320,7 +320,6 @@ class DataPreparer:
                 # Save feature names for consistency
                 feature_names = extracted_features.columns.tolist()
 
-            # Now process other datasets
             for dataset in datasets_to_process:
                 if dataset == 'train':
                     continue  # Already processed
@@ -341,7 +340,7 @@ class DataPreparer:
                 else:
                     self.logger.info(f"No outlier removal configured for '{dataset}' dataset.")
 
-                # Differencing (if configured and applicable)
+                # Differencing 
                 if self.config.data.diff_data:
                     df = self.difference_data(
                         df,
@@ -381,7 +380,6 @@ class DataPreparer:
 
                 self.logger.info(f"Completed preprocessing for '{dataset}' dataset.")
 
-            # Save the pipeline and preprocessed_data to disk
             self.save_preprocessed_data(preprocessed_data, save_path)
 
             return preprocessed_data
@@ -403,7 +401,6 @@ class DataPreparer:
                    pickle.dump(preprocessed_data, f)
              self.logger.info(f"Preprocessed data has been saved to {save_path}.")
 
-             # Save the pipeline
              pipeline_save_path = os.path.join(self.config.paths.model_dir, 'scaling_pipeline.pkl')
              CommonUtils.create_directory(self.config.paths.model_dir)
              with open(pipeline_save_path, 'wb') as f:
