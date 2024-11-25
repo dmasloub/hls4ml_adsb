@@ -30,9 +30,9 @@ class DataConfig:
 
 @dataclass
 class ModelConfig:
-    # input_dim: int = 6                # Updated to match the number of features
+    # input_dim: int = 6                
     encoding_dim: int = 10
-    bits: int = 4                      # Changed to 6 to match provided code
+    bits: int = 4                     
     integer_bits: int = 2
     alpha: float = 10.0
     learning_rate: float = 0.001
