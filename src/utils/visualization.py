@@ -43,7 +43,7 @@ class Visualizer:
             plt.ylabel('Loss')
             plt.legend()
 
-            # Plot Metrics (e.g., MAE)
+            # Plot Metrics
             plt.subplot(1, 2, 2)
             for metric in ['mae', 'val_mae']:
                 if metric in history.history:
