@@ -1,8 +1,8 @@
 import pickle
 
-file_path = '/home/david/Bachelor/hls4ml_adsb/checkpoints/optimizer_results.pkl'  # Replace with your file path
+file_path = '/home/david/Bachelor/hls4ml_adsb/checkpoints/optimizer_results.pkl'  
 
-# Load the pickle file
+
 with open(file_path, 'rb') as file:
     data = pickle.load(file)
 
@@ -10,23 +10,19 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Ensure plots are rendered inline if using Jupyter Notebook
-# %matplotlib inline
-
-# Convert to DataFrame
 df = pd.DataFrame(data)
 
-# Display basic statistics
+
 print("Basic Statistics:")
 print(df.describe())
 
-# Display top 5 configurations based on score
+
 top_n = 10
 print(f"\nTop {top_n} Configurations:")
 print(df.nlargest(top_n, 'score')[['bits', 'integer_bits', 'alpha', 'pruning_percent',
                                    'standard_q_threshold', 'accuracy', 'score']])
 
-# Set Seaborn style
+
 sns.set(style="whitegrid")
 
 # Plot 1: Accuracy vs Average Normalized Resource Usage
@@ -88,10 +84,8 @@ plt.tight_layout()
 plt.show()
 
 # Plot 5: Parallel Coordinates Plot
-# For better visualization, select relevant columns
 from pandas.plotting import parallel_coordinates
 
-# Normalize scores for better visualization
 df_parallel = df.copy()
 df_parallel['score_bin'] = pd.qcut(df_parallel['score'], q=4, labels=['Low', 'Medium', 'High', 'Very High'])
 
@@ -111,6 +105,3 @@ sns.pairplot(df, vars=['accuracy', 'score', 'average_normalized_resource_usage',
              hue='score', palette='viridis', diag_kind='kde')
 plt.suptitle('Pairplot of Key Metrics', y=1.02)
 plt.show()
-
-# Optional: Save plots to files
-# plt.savefig('accuracy_vs_resource.png')
