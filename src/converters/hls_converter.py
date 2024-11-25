@@ -5,7 +5,7 @@ import pickle
 import hls4ml
 import logging
 from tensorflow.keras.models import load_model
-from qkeras import QDense, quantized_bits  # Import required components from QKeras
+from qkeras import QDense, quantized_bits  
 from keras.utils import custom_object_scope
 from src.utils.logger import Logger
 from src.config.config import Config
@@ -32,7 +32,7 @@ class HLSConverter:
         self.model = None
         self.hls_model = None
         self.hls_config = None
-        self.pipeline = None  # If using a preprocessing pipeline
+        self.pipeline = None 
         self.output_dir = self.config.paths.hls_output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -184,14 +184,12 @@ class HLSConverter:
             raise
 
 
-# Example usage
 if __name__ == "__main__":
     from src.utils.common_utils import CommonUtils
 
-    converter = HLSConverter(build_model=True)  # Set to False if you do not want to build the model
+    converter = HLSConverter(build_model=True)  
     utilization_metrics = converter.convert()
 
-    # Optionally, save the utilization metrics
     utilization_path = os.path.join(converter.output_dir, 'resource_utilization.pkl')
     CommonUtils.save_object(utilization_metrics, utilization_path)
     print(f"Resource utilization metrics saved to {utilization_path}.")
