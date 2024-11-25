@@ -335,7 +335,6 @@ class HLSUtils:
             raise
 
 
-# Example usage
 if __name__ == "__main__":
     from src.utils.common_utils import CommonUtils
 
