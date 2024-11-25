@@ -31,7 +31,6 @@ class DataLoader:
             pd.DataFrame: Loaded and concatenated dataset.
         """
         try:
-            # Dynamically get the directory path from config based on dataset_type
             path_attr = f"data_{dataset_type}_dir"
             dataset_path = getattr(self.config.paths, path_attr, None)
 
